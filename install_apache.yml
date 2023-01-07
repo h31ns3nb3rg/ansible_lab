@@ -4,7 +4,7 @@
   become: true
   tasks:
 
-  - name: intsall apache and php package
+  - name: install apache and php package
     package:
       name:
         - "{{ apache_package }}"
