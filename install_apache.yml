@@ -1,0 +1,19 @@
+---
+
+- hosts: all 
+  become: true
+  tasks: 
+
+  - name: update repository index
+    yum:
+      update_cache: yes
+
+  - name: insall apache2 package
+    yum: 
+      name: apache
+      state: latest
+
+  - name: add php support for apache
+    yum: 
+      name: libapache-mod-php
+      state: latest
