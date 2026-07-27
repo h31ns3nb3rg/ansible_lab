@@ -58,7 +58,7 @@ python run_ventas_sync.py --fetch-gmail
 python run_ventas_sync.py
 ```
 
-Default search: PDFs from the last 14 days whose filename matches `ventas*.pdf`. Tune `gmail.query` / `gmail.filename_regex` in config.
+Default search: emails with subject **RESUMEN DE VENTAS Y COBROS** (last 30 days) that have a PDF attachment. Tune `gmail.query` / `gmail.filename_regex` in config if needed.
 
 **Security:** scope is `gmail.readonly` only. Revoke anytime in Google Account → Security → Third-party access.
 
