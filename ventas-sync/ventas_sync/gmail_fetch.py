@@ -58,6 +58,7 @@ def fetch_gmail_pdfs(
     """Search Gmail and save matching PDF attachments into inbox_dir.
 
     If force=True (CLI --fetch-gmail), run even when gmail.enabled is false.
+    Returns download records plus a final summary dict (action=gmail_summary).
     """
     gmail_cfg = config.get("gmail") or {}
     if not force and not gmail_cfg.get("enabled", False):
@@ -71,10 +72,10 @@ def fetch_gmail_pdfs(
 
     query = gmail_cfg.get(
         "query",
-        "has:attachment filename:pdf newer_than:14d",
+        'subject:"RESUMEN DE VENTAS Y COBROS" has:attachment filename:pdf newer_than:30d',
     )
-    max_messages = int(gmail_cfg.get("max_messages", 20))
-    filename_regex = gmail_cfg.get("filename_regex", r"(?i)ventas.*\.pdf$")
+    max_messages = int(gmail_cfg.get("max_messages", 50))
+    filename_regex = gmail_cfg.get("filename_regex", r"(?i).*\.pdf$")
     pattern = re.compile(filename_regex)
 
     service = get_gmail_service(credentials_path, token_path)
@@ -89,6 +90,12 @@ def fetch_gmail_pdfs(
     messages = response.get("messages") or []
     results: list[dict[str, Any]] = []
 
+    emails_found = len(messages)
+    pdfs_seen = 0
+    pdfs_skipped = 0
+    pdfs_downloaded = 0
+    emails_with_downloads = 0
+
     for item in messages:
         msg_id = item["id"]
         message = (
@@ -102,12 +109,15 @@ def fetch_gmail_pdfs(
         subject = headers.get("subject", "")
         sender = headers.get("from", "")
         parts = _walk_parts(payload)
+        downloaded_this_email = 0
 
         for part in parts:
             filename = part.get("filename") or ""
             if not filename.lower().endswith(".pdf"):
                 continue
+            pdfs_seen += 1
             if filename_regex and not pattern.search(filename):
+                pdfs_skipped += 1
                 logging.info(
                     "Skipping attachment %r (filename_regex mismatch) from %s",
                     filename,
@@ -117,6 +127,7 @@ def fetch_gmail_pdfs(
 
             att_id = (part.get("body") or {}).get("attachmentId")
             if not att_id:
+                pdfs_skipped += 1
                 continue
 
             attachment = (
@@ -140,7 +151,30 @@ def fetch_gmail_pdfs(
             }
             logging.info("Downloaded Gmail PDF: %s", info)
             results.append(info)
+            pdfs_downloaded += 1
+            downloaded_this_email += 1
 
-    if not results:
-        logging.info("No matching Gmail PDF attachments found")
+        if downloaded_this_email:
+            emails_with_downloads += 1
+
+    summary = {
+        "action": "gmail_summary",
+        "query": query,
+        "emails_found": emails_found,
+        "emails_with_downloads": emails_with_downloads,
+        "pdfs_seen": pdfs_seen,
+        "pdfs_skipped": pdfs_skipped,
+        "pdfs_downloaded": pdfs_downloaded,
+        "inbox": str(inbox),
+    }
+    logging.info(
+        "Gmail resume: emails_found=%s, pdfs_seen=%s, pdfs_downloaded=%s, pdfs_skipped=%s",
+        emails_found,
+        pdfs_seen,
+        pdfs_downloaded,
+        pdfs_skipped,
+    )
+    if not pdfs_downloaded:
+        logging.info("No matching Gmail PDF attachments downloaded")
+    results.append(summary)
     return results

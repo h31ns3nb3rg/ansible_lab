@@ -5,13 +5,15 @@ from __future__ import annotations
 import json
 import logging
 import shutil
-from datetime import datetime
+from collections import defaultdict
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from .excel_updater import flush_pending, totales_to_row, upsert_with_retry
+from .excel_updater import DailySaleRow, flush_pending, totales_to_row, upsert_with_retry
 from .gmail_fetch import fetch_gmail_pdfs
 from .pdf_parser import parse_totales_generales
+from .register_parser import detect_pdf_kind, parse_register_report, register_to_row
 
 
 def load_config(config_path: str | Path) -> dict[str, Any]:
@@ -40,14 +42,20 @@ def _resolve(base: Path, maybe_relative: str) -> Path:
     return path if path.is_absolute() else (base / path).resolve()
 
 
-def process_pdf(pdf_path: Path, config: dict[str, Any], base_dir: Path) -> dict[str, Any]:
+def _archive(pdf: Path, folder: Path) -> Path:
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    dest = folder / f"{pdf.stem}_{stamp}{pdf.suffix}"
+    shutil.move(str(pdf), str(dest))
+    return dest
+
+
+def _write_row(
+    row: DailySaleRow,
+    config: dict[str, Any],
+    base_dir: Path,
+    source_pdfs: list[str],
+) -> dict[str, Any]:
     excel_path = _resolve(base_dir, config["excel_path"])
-    if not excel_path.exists():
-        raise FileNotFoundError(
-            f"Excel file not found at excel_path. Check OneDrive sync and config.json:\n{excel_path}"
-        )
-    totales = parse_totales_generales(pdf_path)
-    row = totales_to_row(totales, config["ubicacion"])
     ubicaciones = config.get("ubicaciones") or [
         "La Cata LMF",
         "La Cata DF",
@@ -63,11 +71,32 @@ def process_pdf(pdf_path: Path, config: dict[str, Any], base_dir: Path) -> dict[
         pending_path=_resolve(base_dir, config.get("pending_path", "pending/updates.json")),
         ubicaciones=ubicaciones,
     )
-    result["source_pdf"] = str(pdf_path)
+    result["source_pdfs"] = source_pdfs
     result["efectivo"] = row.efectivo
     result["tarjeta_bruta"] = row.tarjeta_bruta
     result["transferencias"] = row.transferencias
+    result["pedidos_ya"] = row.pedidos_ya
     result["itbs_cobrado"] = row.itbs_cobrado
+    return result
+
+
+def process_pdf(pdf_path: Path, config: dict[str, Any], base_dir: Path) -> dict[str, Any]:
+    """Process a single LMF ventas PDF (kept for CLI compatibility)."""
+    excel_path = _resolve(base_dir, config["excel_path"])
+    if not excel_path.exists():
+        raise FileNotFoundError(
+            f"Excel file not found at excel_path. Check OneDrive sync and config.json:\n{excel_path}"
+        )
+    kind = detect_pdf_kind(pdf_path)
+    if kind == "adcontrol_register":
+        row = register_to_row(parse_register_report(pdf_path))
+    elif kind == "lmf_ventas":
+        row = totales_to_row(parse_totales_generales(pdf_path), config["ubicacion"])
+    else:
+        raise ValueError(f"Unrecognized PDF type: {pdf_path.name}")
+    result = _write_row(row, config, base_dir, [str(pdf_path)])
+    result["source_pdf"] = str(pdf_path)
+    result["pdf_kind"] = kind
     return result
 
 
@@ -105,7 +134,6 @@ def process_inbox(
     gmail_results: list[dict[str, Any]] = []
     if should_fetch:
         logging.info("Fetching PDFs from Gmail (OAuth read-only)")
-        # force=True when CLI passed --fetch-gmail, even if gmail.enabled=false
         gmail_results = fetch_gmail_pdfs(config, base_dir, force=True)
 
     logging.info("Flushing pending updates (if any)")
@@ -127,7 +155,6 @@ def process_inbox(
         logging.info("Flushed pending: %s", item)
 
     results: list[dict[str, Any]] = list(gmail_results)
-    # Accept any PDF name (ventas.pdf, ventas-2.pdf, Ventas (1).pdf, etc.)
     pdfs = sorted(
         {
             *inbox.glob("*.pdf"),
@@ -139,17 +166,43 @@ def process_inbox(
         logging.info("No PDFs in inbox: %s", inbox)
         return results
 
-    # Parse first, then process oldest→newest so non-consecutive days land in order.
-    parsed: list[tuple[Any, Path]] = []
+    lmf_jobs: list[tuple[date, Path, DailySaleRow]] = []
+    # Aggregate register shifts by (fecha, ubicacion)
+    register_agg: dict[tuple[date, str], DailySaleRow] = {}
+    register_sources: dict[tuple[date, str], list[Path]] = defaultdict(list)
+
     for pdf in pdfs:
         try:
-            totales = parse_totales_generales(pdf)
-            parsed.append((totales.fecha, pdf))
+            kind = detect_pdf_kind(pdf)
+            logging.info("Detected %s as %s", pdf.name, kind)
+            if kind == "lmf_ventas":
+                totales = parse_totales_generales(pdf)
+                row = totales_to_row(totales, config["ubicacion"])
+                lmf_jobs.append((row.fecha, pdf, row))
+            elif kind == "adcontrol_register":
+                report = parse_register_report(pdf)
+                row = register_to_row(report)
+                key = (row.fecha, row.ubicacion)
+                register_sources[key].append(pdf)
+                if key not in register_agg:
+                    register_agg[key] = row
+                else:
+                    existing = register_agg[key]
+                    register_agg[key] = DailySaleRow(
+                        fecha=existing.fecha,
+                        ubicacion=existing.ubicacion,
+                        efectivo=existing.efectivo + row.efectivo,
+                        tarjeta_bruta=existing.tarjeta_bruta + row.tarjeta_bruta,
+                        transferencias=existing.transferencias + row.transferencias,
+                        notas_credito=existing.notas_credito + row.notas_credito,
+                        itbs_cobrado=(existing.itbs_cobrado or 0) + (row.itbs_cobrado or 0),
+                        pedidos_ya=(existing.pedidos_ya or 0) + (row.pedidos_ya or 0),
+                    )
+            else:
+                raise ValueError("Unrecognized PDF type (expected LMF ventas or AdControl register report)")
         except Exception as exc:  # noqa: BLE001
             logging.exception("Failed to parse %s: %s", pdf.name, exc)
-            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            dest = failed / f"{pdf.stem}_{stamp}{pdf.suffix}"
-            shutil.move(str(pdf), str(dest))
+            dest = _archive(pdf, failed)
             results.append(
                 {
                     "action": "failed",
@@ -158,29 +211,25 @@ def process_inbox(
                     "error": str(exc),
                 }
             )
-    parsed.sort(key=lambda item: (item[0], item[1].name))
 
-    for _fecha, pdf in parsed:
-        logging.info("Processing %s", pdf.name)
+    # Process LMF PDFs oldest→newest (one row each)
+    lmf_jobs.sort(key=lambda item: (item[0], item[1].name))
+    for _fecha, pdf, row in lmf_jobs:
+        logging.info("Processing LMF PDF %s", pdf.name)
         try:
-            result = process_pdf(pdf, config, base_dir)
-            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            dest = processed / f"{pdf.stem}_{stamp}{pdf.suffix}"
-            shutil.move(str(pdf), str(dest))
+            result = _write_row(row, config, base_dir, [str(pdf)])
+            dest = _archive(pdf, processed)
             result["archived_to"] = str(dest)
+            result["pdf_kind"] = "lmf_ventas"
+            result["source_pdf"] = str(pdf)
             if result.get("action") == "queued":
-                logging.error(
-                    "Excel locked/unavailable — update queued for later: %s",
-                    result,
-                )
+                logging.error("Excel locked/unavailable — update queued: %s", result)
             else:
                 logging.info("OK wrote %s", result)
             results.append(result)
-        except Exception as exc:  # noqa: BLE001 - top-level per-file handler
+        except Exception as exc:  # noqa: BLE001
             logging.exception("Failed %s: %s", pdf.name, exc)
-            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            dest = failed / f"{pdf.stem}_{stamp}{pdf.suffix}"
-            shutil.move(str(pdf), str(dest))
+            dest = _archive(pdf, failed)
             results.append(
                 {
                     "action": "failed",
@@ -189,4 +238,43 @@ def process_inbox(
                     "error": str(exc),
                 }
             )
+
+    # Process aggregated register reports oldest→newest
+    for key in sorted(register_agg.keys(), key=lambda k: (k[0], k[1])):
+        row = register_agg[key]
+        sources = register_sources[key]
+        logging.info(
+            "Processing register aggregate %s %s from %s PDF(s)",
+            row.fecha,
+            row.ubicacion,
+            len(sources),
+        )
+        try:
+            result = _write_row(row, config, base_dir, [str(p) for p in sources])
+            archived = []
+            for pdf in sources:
+                archived.append(str(_archive(pdf, processed)))
+            result["archived_to"] = archived
+            result["pdf_kind"] = "adcontrol_register"
+            result["shifts_aggregated"] = len(sources)
+            if result.get("action") == "queued":
+                logging.error("Excel locked/unavailable — update queued: %s", result)
+            else:
+                logging.info("OK wrote %s", result)
+            results.append(result)
+        except Exception as exc:  # noqa: BLE001
+            logging.exception("Failed register aggregate %s: %s", key, exc)
+            archived = []
+            for pdf in sources:
+                if pdf.exists():
+                    archived.append(str(_archive(pdf, failed)))
+            results.append(
+                {
+                    "action": "failed",
+                    "source_pdfs": [str(p) for p in sources],
+                    "archived_to": archived,
+                    "error": str(exc),
+                }
+            )
+
     return results

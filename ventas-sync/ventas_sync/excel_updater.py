@@ -96,6 +96,7 @@ class DailySaleRow:
     transferencias: float
     notas_credito: float
     itbs_cobrado: float | None = None
+    pedidos_ya: float | None = None
 
 
 def totales_to_row(totales: TotalesGenerales, ubicacion: str) -> DailySaleRow:
@@ -215,6 +216,8 @@ def apply_row(ws: Worksheet, row: int, data: DailySaleRow, fee_rate_cell: str) -
     ws.cell(row, 3).value = data.efectivo
     ws.cell(row, 4).value = data.tarjeta_bruta
     ws.cell(row, 7).value = data.transferencias
+    if data.pedidos_ya is not None:
+        ws.cell(row, 8).value = data.pedidos_ya
     ws.cell(row, 9).value = data.notas_credito
     if data.itbs_cobrado is not None:
         ws.cell(row, 12).value = data.itbs_cobrado
@@ -387,6 +390,7 @@ def flush_pending(
             transferencias=item["transferencias"],
             notas_credito=item["notas_credito"],
             itbs_cobrado=item.get("itbs_cobrado"),
+            pedidos_ya=item.get("pedidos_ya"),
         )
         result = upsert_with_retry(
             excel_path,
