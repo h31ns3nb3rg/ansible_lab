@@ -67,7 +67,7 @@ Same-day shifts per store are summed. LMF rows are left alone.
 | Job | Time (Mac local) | What it does |
 |---|---|---|
 | Gmail / LMF | **02:00** | `python run_ventas_sync.py --fetch-gmail` |
-| DF / SJM inbox | **11:00** | `python run_ventas_sync.py --no-fetch-gmail` (reads `inbox/`) |
+| DF / SJM inbox | **11:00** and **20:00** | `python run_ventas_sync.py --no-fetch-gmail` (reads `inbox/`) |
 
 ### Install (once)
 ```bash
@@ -77,10 +77,10 @@ chmod +x scripts/run_job.sh schedule/macos/*.sh
 ```
 
 ### Daily DF/SJM habit
-Drop AdControl register-report PDFs into `~/Cata-Ventas-Auto/inbox/` **before 11:00**. The 11am job processes whatever is there (same-day shifts are summed).
+Drop AdControl register-report PDFs into `~/Cata-Ventas-Auto/inbox/` **before 11:00 or 20:00**. Each run processes whatever is there (same-day shifts are summed).
 
 ### Logs
-- Per-run: `logs/scheduled_gmail-2am_*.log`, `logs/scheduled_inbox-11am_*.log`
+- Per-run: `logs/scheduled_gmail-2am_*.log`, `logs/scheduled_inbox_*.log`
 - launchd: `logs/launchd_gmail.*.log`, `logs/launchd_inbox.*.log`
 
 ### Manual / uninstall
@@ -90,7 +90,7 @@ VENTAS_JOB_TAG=manual-inbox ./scripts/run_job.sh --no-fetch-gmail
 ./schedule/macos/uninstall_schedule.sh
 ```
 
-**Sleep note:** if the Mac is fully asleep at 2am/11am, that run may be skipped until the next day. Keep it plugged in, or enable waking for scheduled tasks in Energy settings.
+**Sleep note:** if the Mac is fully asleep at 2am / 11am / 8pm, that run may be skipped until the next scheduled time. Keep it plugged in, or enable waking for scheduled tasks in Energy settings.
 
 ## Notes
 - Close Excel before running when possible (OneDrive). If locked, updates go to `pending/` and flush on the next successful run.

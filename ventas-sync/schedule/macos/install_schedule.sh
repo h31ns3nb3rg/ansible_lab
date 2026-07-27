@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install LaunchAgents for La Cata ventas sync (Gmail 2am + inbox 11am).
+# Install LaunchAgents for La Cata ventas sync (Gmail 2am + inbox 11am/8pm).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -56,7 +56,7 @@ fi
 echo
 echo "Installed LaunchAgents:"
 echo "  $AGENTS_DIR/${LABEL_GMAIL}.plist   → daily 02:00  (--fetch-gmail)"
-echo "  $AGENTS_DIR/${LABEL_INBOX}.plist   → daily 11:00  (--no-fetch-gmail / inbox PDFs)"
+echo "  $AGENTS_DIR/${LABEL_INBOX}.plist   → daily 11:00 & 20:00  (--no-fetch-gmail / inbox PDFs)"
 echo
 echo "Project root: $ROOT"
 echo "Logs:         $ROOT/logs/"
@@ -70,6 +70,6 @@ echo "  VENTAS_JOB_TAG=manual-gmail \"$ROOT/scripts/run_job.sh\" --fetch-gmail"
 echo "  VENTAS_JOB_TAG=manual-inbox \"$ROOT/scripts/run_job.sh\" --no-fetch-gmail"
 echo
 echo "Notes:"
-echo "  • Mac must be awake (or wake) at 2am / 11am — sleep can skip a run."
-echo "  • Close Excel overnight / before 11am when possible; locked files are queued to pending/."
-echo "  • Drop DF/SJM register PDFs into $ROOT/inbox/ before 11am."
+echo "  • Mac must be awake (or wake) at 2am / 11am / 8pm — sleep can skip a run."
+echo "  • Close Excel when possible; locked files are queued to pending/."
+echo "  • Drop DF/SJM register PDFs into $ROOT/inbox/ before 11am or 8pm."
