@@ -267,10 +267,18 @@ def upsert_daily_sale(
     fee_rate_cell: str = "Setup!$B$6",
     ubicaciones: list[str] | None = None,
 ) -> dict[str, Any]:
-    path = Path(excel_path)
+    import shutil
+    import tempfile
+
+    path = Path(excel_path).expanduser().resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"Excel file not found: {path}")
+    if not path.is_file():
+        raise ValueError(f"Excel path is not a file: {path}")
+
     wb = load_workbook(path)
     if sheet_name not in wb.sheetnames:
-        raise ValueError(f"Sheet not found: {sheet_name}")
+        raise ValueError(f"Sheet not found: {sheet_name} in {path}")
     ws = wb[sheet_name]
     locations = ubicaciones or DEFAULT_UBICACIONES
     if data.ubicacion not in locations:
@@ -289,14 +297,29 @@ def upsert_daily_sale(
             _apply_row_formats(ws, sibling_row)
             _write_formulas(ws, sibling_row, fee_rate_cell)
 
-    wb.save(path)
-    wb.close()
+    # Save via temp file then replace — more reliable with OneDrive locks/sync
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.stem}_", suffix=".xlsx", dir=str(path.parent))
+    tmp_path = Path(tmp_name)
+    try:
+        import os
+
+        os.close(fd)
+        wb.save(tmp_path)
+        wb.close()
+        shutil.move(str(tmp_path), str(path))
+    except Exception:
+        wb.close()
+        if tmp_path.exists():
+            tmp_path.unlink(missing_ok=True)
+        raise
+
     return {
         "action": action,
         "row": row,
         "fecha": data.fecha.isoformat(),
         "fecha_display": format_fecha_es(data.fecha),
         "ubicacion": data.ubicacion,
+        "excel_path": str(path),
         "day_rows": row_map,
         "created_locations": [u for u in locations if u not in before],
     }

@@ -35,12 +35,16 @@ def setup_logging(logs_dir: str | Path) -> Path:
 
 
 def _resolve(base: Path, maybe_relative: str) -> Path:
-    path = Path(maybe_relative)
-    return path if path.is_absolute() else (base / path)
+    path = Path(maybe_relative).expanduser()
+    return path if path.is_absolute() else (base / path).resolve()
 
 
 def process_pdf(pdf_path: Path, config: dict[str, Any], base_dir: Path) -> dict[str, Any]:
     excel_path = _resolve(base_dir, config["excel_path"])
+    if not excel_path.exists():
+        raise FileNotFoundError(
+            f"Excel file not found at excel_path. Check OneDrive sync and config.json:\n{excel_path}"
+        )
     totales = parse_totales_generales(pdf_path)
     row = totales_to_row(totales, config["ubicacion"])
     ubicaciones = config.get("ubicaciones") or [
@@ -80,6 +84,13 @@ def process_inbox(config_path: str | Path = "config.json") -> list[dict[str, Any
 
     excel_path = _resolve(base_dir, config["excel_path"])
     pending_path = _resolve(base_dir, config.get("pending_path", "pending/updates.json"))
+
+    logging.info("Config: %s", config_file)
+    logging.info("Excel target: %s (exists=%s)", excel_path, excel_path.exists())
+    if not excel_path.exists():
+        raise FileNotFoundError(
+            f"Excel file not found. Update excel_path or wait for OneDrive to download:\n{excel_path}"
+        )
 
     logging.info("Flushing pending updates (if any)")
     ubicaciones = config.get("ubicaciones") or [
@@ -141,7 +152,13 @@ def process_inbox(config_path: str | Path = "config.json") -> list[dict[str, Any
             dest = processed / f"{pdf.stem}_{stamp}{pdf.suffix}"
             shutil.move(str(pdf), str(dest))
             result["archived_to"] = str(dest)
-            logging.info("OK %s", result)
+            if result.get("action") == "queued":
+                logging.error(
+                    "Excel locked/unavailable — update queued for later: %s",
+                    result,
+                )
+            else:
+                logging.info("OK wrote %s", result)
             results.append(result)
         except Exception as exc:  # noqa: BLE001 - top-level per-file handler
             logging.exception("Failed %s: %s", pdf.name, exc)
