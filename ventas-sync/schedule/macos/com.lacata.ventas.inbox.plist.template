@@ -22,7 +22,6 @@
     <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
   </dict>
 
-  <!-- Local Mac timezone: every day at 11:00 — processes DF/SJM PDFs already in inbox/ -->
   <key>StartCalendarInterval</key>
   <dict>
     <key>Hour</key>
