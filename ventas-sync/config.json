@@ -1,0 +1,13 @@
+{
+  "excel_path": "data/LaCata_Contabilidad_v3_automation.xlsx",
+  "sheet_name": "Ventas Diarias",
+  "ubicacion": "La Cata LMF",
+  "inbox_dir": "inbox",
+  "processed_dir": "processed",
+  "failed_dir": "failed",
+  "pending_path": "pending/updates.json",
+  "logs_dir": "logs",
+  "fee_rate_cell": "Setup!$B$6",
+  "lock_retries": 5,
+  "lock_retry_seconds": 2
+}
