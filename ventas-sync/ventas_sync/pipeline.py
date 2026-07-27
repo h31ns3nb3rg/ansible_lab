@@ -10,7 +10,18 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from .excel_updater import DailySaleRow, flush_pending, totales_to_row, upsert_with_retry
+from .cierres_parser import (
+    aggregate_cierres,
+    parse_cierres_workbook,
+    summarize_cierres,
+)
+from .excel_updater import (
+    DailySaleRow,
+    flush_pending,
+    totales_to_row,
+    upsert_daily_sales_batch,
+    upsert_with_retry,
+)
 from .gmail_fetch import fetch_gmail_pdfs
 from .pdf_parser import parse_totales_generales
 from .register_parser import detect_pdf_kind, parse_register_report, register_to_row
@@ -278,3 +289,103 @@ def process_inbox(
             )
 
     return results
+
+
+def import_cierres_excel(
+    cierres_path: str | Path,
+    config_path: str | Path = "config.json",
+    *,
+    dry_run: bool = False,
+    excel_path_override: str | Path | None = None,
+) -> dict[str, Any]:
+    """Bulk-load DF/SJM from AdControl advanced cierres Excel into Ventas Diarias."""
+    config_file = Path(config_path).resolve()
+    base_dir = config_file.parent
+    config = load_config(config_file)
+    setup_logging(_resolve(base_dir, config.get("logs_dir", "logs")))
+
+    source = Path(cierres_path).expanduser().resolve()
+    if not source.exists():
+        raise FileNotFoundError(f"Cierres Excel not found: {source}")
+
+    excel_path = (
+        Path(excel_path_override).expanduser().resolve()
+        if excel_path_override
+        else _resolve(base_dir, config["excel_path"])
+    )
+    ubicaciones = config.get("ubicaciones") or [
+        "La Cata LMF",
+        "La Cata DF",
+        "La Cata SJM",
+    ]
+
+    logging.info("Parsing cierres export: %s", source)
+    shifts = parse_cierres_workbook(source)
+    rows = aggregate_cierres(shifts)
+    summary = summarize_cierres(rows)
+    logging.info(
+        "Parsed %s shifts → %s day/location rows (%s → %s)",
+        len(shifts),
+        summary["days_locations"],
+        summary["date_from"],
+        summary["date_to"],
+    )
+    logging.info("By ubicación: %s", summary["by_ubicacion"])
+
+    payload: dict[str, Any] = {
+        "action": "import_cierres_dry_run" if dry_run else "import_cierres",
+        "source": str(source),
+        "excel_path": str(excel_path),
+        "shifts": len(shifts),
+        **summary,
+        "preview": [
+            {
+                "fecha": r.fecha.isoformat(),
+                "ubicacion": r.ubicacion,
+                "efectivo": r.efectivo,
+                "tarjeta_bruta": r.tarjeta_bruta,
+                "transferencias": r.transferencias,
+                "pedidos_ya": r.pedidos_ya,
+            }
+            for r in rows[:10]
+        ],
+    }
+    if dry_run:
+        payload["rows"] = [
+            {
+                "fecha": r.fecha.isoformat(),
+                "ubicacion": r.ubicacion,
+                "efectivo": r.efectivo,
+                "tarjeta_bruta": r.tarjeta_bruta,
+                "transferencias": r.transferencias,
+                "pedidos_ya": r.pedidos_ya,
+            }
+            for r in rows
+        ]
+        return payload
+
+    if not excel_path.exists():
+        raise FileNotFoundError(
+            f"Excel file not found. Update excel_path or wait for OneDrive:\n{excel_path}"
+        )
+
+    results = upsert_daily_sales_batch(
+        excel_path=excel_path,
+        sheet_name=config["sheet_name"],
+        rows=rows,
+        fee_rate_cell=config.get("fee_rate_cell", "Setup!$B$6"),
+        ubicaciones=ubicaciones,
+    )
+    inserted = sum(1 for r in results if r.get("action") == "inserted")
+    updated = sum(1 for r in results if r.get("action") == "updated")
+    payload["written"] = len(results)
+    payload["inserted"] = inserted
+    payload["updated"] = updated
+    payload["results"] = results
+    logging.info(
+        "Cierres import done: written=%s inserted=%s updated=%s",
+        len(results),
+        inserted,
+        updated,
+    )
+    return payload

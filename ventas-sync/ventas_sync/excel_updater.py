@@ -263,6 +263,38 @@ def _ensure_day_block(
     return _rows_for_fecha(ws, fecha)
 
 
+def _upsert_on_worksheet(
+    ws: Worksheet,
+    data: DailySaleRow,
+    fee_rate_cell: str,
+    locations: list[str],
+) -> dict[str, Any]:
+    before = _rows_for_fecha(ws, data.fecha)
+    row_map = _ensure_day_block(ws, data.fecha, locations, fee_rate_cell)
+    row = row_map[data.ubicacion]
+    action = "updated" if data.ubicacion in before else "inserted"
+    apply_row(ws, row, data, fee_rate_cell)
+    # Keep sibling stub rows on the same date visually consistent
+    for ubic, sibling_row in row_map.items():
+        if ubic != data.ubicacion:
+            _write_fecha(ws, sibling_row, data.fecha)
+            _apply_row_formats(ws, sibling_row)
+            _write_formulas(ws, sibling_row, fee_rate_cell)
+    return {
+        "action": action,
+        "row": row,
+        "fecha": data.fecha.isoformat(),
+        "fecha_display": format_fecha_es(data.fecha),
+        "ubicacion": data.ubicacion,
+        "day_rows": row_map,
+        "created_locations": [u for u in locations if u not in before],
+        "efectivo": data.efectivo,
+        "tarjeta_bruta": data.tarjeta_bruta,
+        "transferencias": data.transferencias,
+        "pedidos_ya": data.pedidos_ya,
+    }
+
+
 def upsert_daily_sale(
     excel_path: str | Path,
     sheet_name: str,
@@ -285,33 +317,48 @@ def upsert_daily_sale(
         # Still allow the PDF ubicacion; put it first if unknown
         locations = [data.ubicacion, *[u for u in locations if u != data.ubicacion]]
 
-    before = _rows_for_fecha(ws, data.fecha)
-    row_map = _ensure_day_block(ws, data.fecha, locations, fee_rate_cell)
-    row = row_map[data.ubicacion]
-    action = "updated" if data.ubicacion in before else "inserted"
-    apply_row(ws, row, data, fee_rate_cell)
-    # Keep sibling stub rows on the same date visually consistent
-    for ubic, sibling_row in row_map.items():
-        if ubic != data.ubicacion:
-            _write_fecha(ws, sibling_row, data.fecha)
-            _apply_row_formats(ws, sibling_row)
-            _write_formulas(ws, sibling_row, fee_rate_cell)
+    result = _upsert_on_worksheet(ws, data, fee_rate_cell, locations)
 
     # Save in place. Do NOT delete/replace the OneDrive file (that triggers
     # "Deleted Files Are Removed Everywhere" and can drop the workbook).
     wb.save(path)
     wb.close()
 
-    return {
-        "action": action,
-        "row": row,
-        "fecha": data.fecha.isoformat(),
-        "fecha_display": format_fecha_es(data.fecha),
-        "ubicacion": data.ubicacion,
-        "excel_path": str(path),
-        "day_rows": row_map,
-        "created_locations": [u for u in locations if u not in before],
-    }
+    result["excel_path"] = str(path)
+    return result
+
+
+def upsert_daily_sales_batch(
+    excel_path: str | Path,
+    sheet_name: str,
+    rows: list[DailySaleRow],
+    fee_rate_cell: str = "Setup!$B$6",
+    ubicaciones: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """Upsert many day/location rows with a single workbook open/save."""
+    path = Path(excel_path).expanduser().resolve()
+    if not path.exists():
+        raise FileNotFoundError(f"Excel file not found: {path}")
+    if not path.is_file():
+        raise ValueError(f"Excel path is not a file: {path}")
+
+    wb = load_workbook(path)
+    if sheet_name not in wb.sheetnames:
+        raise ValueError(f"Sheet not found: {sheet_name} in {path}")
+    ws = wb[sheet_name]
+    base_locations = list(ubicaciones or DEFAULT_UBICACIONES)
+    results: list[dict[str, Any]] = []
+    for data in sorted(rows, key=lambda r: (r.fecha, r.ubicacion)):
+        locations = base_locations
+        if data.ubicacion not in locations:
+            locations = [data.ubicacion, *[u for u in locations if u != data.ubicacion]]
+        result = _upsert_on_worksheet(ws, data, fee_rate_cell, locations)
+        result["excel_path"] = str(path)
+        results.append(result)
+
+    wb.save(path)
+    wb.close()
+    return results
 
 
 def upsert_with_retry(

@@ -40,6 +40,28 @@ python run_ventas_sync.py --no-fetch-gmail
 | PEDIDOS YA | `PedidosYA` |
 | ITBS COBRADO | `Impuesto` |
 
+## DF / SJM bulk backfill (cierres Excel)
+From AdControl, export **Informe avanzado de cierres de caja** (`.xlsx`), then:
+
+```bash
+# Preview only
+python run_ventas_sync.py --import-cierres "/path/to/Informe_avanzado_de_cierres_de_caja.xlsx" --dry-run
+
+# Write into OneDrive workbook (close Excel first)
+python run_ventas_sync.py --import-cierres "/path/to/Informe_avanzado_de_cierres_de_caja.xlsx"
+```
+
+| Excel | Cierres column |
+|---|---|
+| FECHA | date from `Hora de apertura` |
+| UBICACION | `(SAN JUAN)` → `La Cata SJM`, `(DEFILLO)` → `La Cata DF` |
+| EFECTIVO | `Cantidad de cierre` (= PDF `Efectivo del Dia`) |
+| TARJETA (BRUTA) | `Total en pago con tarjeta` |
+| TRANSFERENCIAS | `Transeferencia bancaria` + `Total en otros pagos` |
+| PEDIDOS YA | `Total en PedidosYA` |
+
+Same-day shifts per store are summed. LMF rows are left alone.
+
 ## Notes
 - Close Excel before running (OneDrive)
 - Never commit `secrets/`

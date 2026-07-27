@@ -19,7 +19,7 @@ from ventas_sync.gmail_oauth import (  # noqa: E402
     gmail_paths_from_config,
 )
 from ventas_sync.pdf_parser import parse_totales_generales  # noqa: E402
-from ventas_sync.pipeline import load_config, process_inbox  # noqa: E402
+from ventas_sync.pipeline import import_cierres_excel, load_config, process_inbox  # noqa: E402
 
 
 def main() -> int:
@@ -37,6 +37,21 @@ def main() -> int:
         help="Only parse a PDF and print JSON (no Excel write)",
     )
     parser.add_argument(
+        "--import-cierres",
+        metavar="XLSX",
+        help="Bulk-import AdControl 'Informe avanzado de cierres de caja' into Ventas Diarias (DF/SJM)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="With --import-cierres: parse and summarize only (no Excel write)",
+    )
+    parser.add_argument(
+        "--excel",
+        metavar="XLSX",
+        help="Override config excel_path (useful for testing a local workbook copy)",
+    )
+    parser.add_argument(
         "--auth-gmail",
         action="store_true",
         help="Run Google OAuth once and save token (browser login)",
@@ -52,6 +67,34 @@ def main() -> int:
         help="Skip Gmail even if gmail.enabled=true in config",
     )
     args = parser.parse_args()
+
+    if args.import_cierres:
+        result = import_cierres_excel(
+            args.import_cierres,
+            args.config,
+            dry_run=args.dry_run,
+            excel_path_override=args.excel,
+        )
+        # Keep JSON readable: drop per-row detail unless dry-run
+        printable = dict(result)
+        if not args.dry_run and "results" in printable:
+            printable["results_sample"] = printable["results"][:5]
+            printable["results_omitted"] = max(0, len(result.get("results", [])) - 5)
+            del printable["results"]
+        print(json.dumps(printable, indent=2, default=str))
+        print("\n=== Cierres import resume ===")
+        print(f"Shifts: {result.get('shifts')}")
+        print(f"Day/location rows: {result.get('days_locations')} ({result.get('by_ubicacion')})")
+        print(f"Range: {result.get('date_from')} → {result.get('date_to')}")
+        if args.dry_run:
+            print("Dry run — Excel not modified")
+        else:
+            print(
+                f"Written: {result.get('written')} "
+                f"(inserted={result.get('inserted')}, updated={result.get('updated')})"
+            )
+        print("=============================\n")
+        return 0
 
     if args.parse_only:
         totales = parse_totales_generales(args.parse_only)
