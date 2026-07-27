@@ -98,10 +98,37 @@ def main() -> int:
         fetch = None  # honor config gmail.enabled
 
     results = process_inbox(args.config, fetch_gmail=fetch)
+
+    # Human-readable resume
+    gmail_summary = next((r for r in results if r.get("action") == "gmail_summary"), None)
+    downloaded = [r for r in results if r.get("action") == "downloaded"]
+    written = [r for r in results if r.get("action") in {"inserted", "updated"}]
+    failed = [r for r in results if r.get("action") == "failed"]
+    queued = [r for r in results if r.get("action") == "queued"]
+
+    print("\n=== Run resume ===")
+    if gmail_summary:
+        print(
+            "Gmail: "
+            f"{gmail_summary.get('emails_found', 0)} emails found, "
+            f"{gmail_summary.get('pdfs_seen', 0)} PDFs seen, "
+            f"{gmail_summary.get('pdfs_downloaded', 0)} downloaded, "
+            f"{gmail_summary.get('pdfs_skipped', 0)} skipped"
+        )
+        print(f"Gmail query: {gmail_summary.get('query')}")
+    else:
+        print("Gmail: not fetched this run")
+    print(f"Excel rows written: {len(written)} (inserted/updated)")
+    if failed:
+        print(f"Failed: {len(failed)}")
+    if queued:
+        print(f"Queued (Excel locked): {len(queued)}")
+    print("==================\n")
+
     print(json.dumps(results, indent=2, default=str))
-    if any(r.get("action") == "failed" for r in results):
+    if failed:
         return 1
-    if any(r.get("action") == "queued" for r in results):
+    if queued:
         return 2
     return 0
 

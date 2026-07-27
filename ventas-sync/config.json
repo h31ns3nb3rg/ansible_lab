@@ -15,8 +15,8 @@
     "enabled": true,
     "credentials_path": "secrets/credentials.json",
     "token_path": "secrets/token.json",
-    "query": "has:attachment filename:pdf newer_than:14d",
-    "filename_regex": "(?i)ventas.*\\.pdf$",
-    "max_messages": 20
+    "query": "subject:\"RESUMEN DE VENTAS Y COBROS\" has:attachment filename:pdf newer_than:30d",
+    "filename_regex": "(?i).*\\.pdf$",
+    "max_messages": 50
   }
 }
