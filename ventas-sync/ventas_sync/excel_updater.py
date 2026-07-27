@@ -16,10 +16,75 @@ from .pdf_parser import TotalesGenerales
 
 DEFAULT_UBICACIONES = ["La Cata LMF", "La Cata DF", "La Cata SJM"]
 
-# Match existing Ventas Diarias formatting (Spanish long date + RD$ amounts)
-DATE_FORMAT = '[$-1C0A]dddd\\ d" de "mmmm" de "yyyy;@'
+# Match existing Ventas Diarias formatting (RD$ amounts).
+# FECHA is written as Spanish text so Mac Excel always shows it correctly
+# (locale date formats like [$-1C0A] often display as "2026-07-20 0:00:00" on Mac).
 CURRENCY_FORMAT = '"RD$"\\ #,##0.00'
 CURRENCY_COLS = (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)  # C–N
+
+_DIAS = (
+    "lunes",
+    "martes",
+    "miércoles",
+    "jueves",
+    "viernes",
+    "sábado",
+    "domingo",
+)
+_MESES = (
+    "enero",
+    "febrero",
+    "marzo",
+    "abril",
+    "mayo",
+    "junio",
+    "julio",
+    "agosto",
+    "septiembre",
+    "octubre",
+    "noviembre",
+    "diciembre",
+)
+_MES_LOOKUP = {nombre: idx + 1 for idx, nombre in enumerate(_MESES)}
+_MES_LOOKUP.update(
+    {
+        "setiembre": 9,  # variant
+    }
+)
+
+
+def format_fecha_es(value: date) -> str:
+    """Match sheet display: 'martes 30 de junio de 2026'."""
+    return f"{_DIAS[value.weekday()]} {value.day} de {_MESES[value.month - 1]} de {value.year}"
+
+
+def _parse_fecha_es(text: str) -> date | None:
+    """Parse Spanish long dates with or without accented characters."""
+    import re
+    import unicodedata
+
+    def strip_accents(s: str) -> str:
+        return "".join(
+            ch for ch in unicodedata.normalize("NFD", s) if unicodedata.category(ch) != "Mn"
+        )
+
+    cleaned = " ".join(text.strip().lower().split())
+    cleaned = strip_accents(cleaned)
+    # lunes 20 de julio de 2026  OR  martes 30 de junio 2026
+    match = re.match(
+        r"^(lunes|martes|miercoles|jueves|viernes|sabado|domingo)\s+"
+        r"(\d{1,2})\s+de\s+"
+        r"(enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)"
+        r"(?:\s+de)?\s+"
+        r"(\d{4})$",
+        cleaned,
+    )
+    if not match:
+        return None
+    day = int(match.group(2))
+    month = _MES_LOOKUP[match.group(3)]
+    year = int(match.group(4))
+    return date(year, month, day)
 
 
 @dataclass
@@ -57,9 +122,13 @@ def _as_date(value: Any) -> date | None:
 
         return from_excel(value).date()
     if isinstance(value, str):
-        for fmt in ("%Y-%m-%d", "%d/%m/%Y"):
+        text = value.strip()
+        parsed = _parse_fecha_es(text)
+        if parsed:
+            return parsed
+        for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%Y-%m-%d %H:%M:%S"):
             try:
-                return datetime.strptime(value.strip(), fmt).date()
+                return datetime.strptime(text, fmt).date()
             except ValueError:
                 continue
     return None
@@ -107,9 +176,16 @@ def _chronological_insert_row(ws: Worksheet, fecha: date) -> int:
 
 
 def _apply_row_formats(ws: Worksheet, row: int) -> None:
-    ws.cell(row, 1).number_format = DATE_FORMAT
+    # Text date — no time component possible
+    ws.cell(row, 1).number_format = "@"
     for col in CURRENCY_COLS:
         ws.cell(row, col).number_format = CURRENCY_FORMAT
+
+
+def _write_fecha(ws: Worksheet, row: int, fecha: date) -> None:
+    cell = ws.cell(row, 1)
+    cell.value = format_fecha_es(fecha)
+    cell.number_format = "@"
 
 
 def _write_formulas(ws: Worksheet, row: int, fee_rate_cell: str) -> None:
@@ -121,7 +197,7 @@ def _write_formulas(ws: Worksheet, row: int, fee_rate_cell: str) -> None:
 
 def _write_stub(ws: Worksheet, row: int, fecha: date, ubicacion: str, fee_rate_cell: str) -> None:
     """Placeholder row for a location on a date (amounts 0 until filled)."""
-    ws.cell(row, 1).value = datetime.combine(fecha, datetime.min.time())
+    _write_fecha(ws, row, fecha)
     ws.cell(row, 2).value = ubicacion
     ws.cell(row, 3).value = 0  # EFECTIVO
     ws.cell(row, 4).value = 0  # TARJETA
@@ -134,8 +210,7 @@ def _write_stub(ws: Worksheet, row: int, fecha: date, ubicacion: str, fee_rate_c
 
 
 def apply_row(ws: Worksheet, row: int, data: DailySaleRow, fee_rate_cell: str) -> None:
-    # Date only (midnight) — display format hides time (Spanish long date)
-    ws.cell(row, 1).value = datetime.combine(data.fecha, datetime.min.time())
+    _write_fecha(ws, row, data.fecha)
     ws.cell(row, 2).value = data.ubicacion
     ws.cell(row, 3).value = data.efectivo
     ws.cell(row, 4).value = data.tarjeta_bruta
@@ -210,6 +285,7 @@ def upsert_daily_sale(
     # Keep sibling stub rows on the same date visually consistent
     for ubic, sibling_row in row_map.items():
         if ubic != data.ubicacion:
+            _write_fecha(ws, sibling_row, data.fecha)
             _apply_row_formats(ws, sibling_row)
             _write_formulas(ws, sibling_row, fee_rate_cell)
 
@@ -219,6 +295,7 @@ def upsert_daily_sale(
         "action": action,
         "row": row,
         "fecha": data.fecha.isoformat(),
+        "fecha_display": format_fecha_es(data.fecha),
         "ubicacion": data.ubicacion,
         "day_rows": row_map,
         "created_locations": [u for u in locations if u not in before],
