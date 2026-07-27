@@ -12,7 +12,7 @@
   "lock_retries": 5,
   "lock_retry_seconds": 2,
   "gmail": {
-    "enabled": false,
+    "enabled": true,
     "credentials_path": "secrets/credentials.json",
     "token_path": "secrets/token.json",
     "query": "has:attachment filename:pdf newer_than:14d",

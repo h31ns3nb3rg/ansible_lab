@@ -49,10 +49,18 @@ def _header_map(payload: dict[str, Any]) -> dict[str, str]:
     return {h.get("name", "").lower(): h.get("value", "") for h in headers}
 
 
-def fetch_gmail_pdfs(config: dict[str, Any], base_dir: Path) -> list[dict[str, Any]]:
-    """Search Gmail and save matching PDF attachments into inbox_dir."""
+def fetch_gmail_pdfs(
+    config: dict[str, Any],
+    base_dir: Path,
+    *,
+    force: bool = False,
+) -> list[dict[str, Any]]:
+    """Search Gmail and save matching PDF attachments into inbox_dir.
+
+    If force=True (CLI --fetch-gmail), run even when gmail.enabled is false.
+    """
     gmail_cfg = config.get("gmail") or {}
-    if not gmail_cfg.get("enabled", False):
+    if not force and not gmail_cfg.get("enabled", False):
         logging.info("Gmail fetch disabled in config (gmail.enabled=false)")
         return []
 

@@ -105,7 +105,8 @@ def process_inbox(
     gmail_results: list[dict[str, Any]] = []
     if should_fetch:
         logging.info("Fetching PDFs from Gmail (OAuth read-only)")
-        gmail_results = fetch_gmail_pdfs(config, base_dir)
+        # force=True when CLI passed --fetch-gmail, even if gmail.enabled=false
+        gmail_results = fetch_gmail_pdfs(config, base_dir, force=True)
 
     logging.info("Flushing pending updates (if any)")
     ubicaciones = config.get("ubicaciones") or [
