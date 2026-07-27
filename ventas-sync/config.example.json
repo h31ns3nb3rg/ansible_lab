@@ -1,5 +1,5 @@
 {
-  "excel_path": "data/LaCata_Contabilidad_v3_automation.xlsx",
+  "excel_path": "/Users/joseroa/Library/CloudStorage/OneDrive-Personal/LaCata_Company_Folder/LaCata_Contabilidad_v3.xlsx",
   "sheet_name": "Ventas Diarias",
   "ubicacion": "La Cata LMF",
   "ubicaciones": ["La Cata LMF", "La Cata DF", "La Cata SJM"],
