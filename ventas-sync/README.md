@@ -125,7 +125,7 @@ VENTAS_JOB_TAG=manual-inbox ./scripts/run_job.sh --no-fetch-gmail
 | Job | Times (Mac local) | Command |
 |---|---|---|
 | Gmail / LMF | **02:00** and **19:00** | `--fetch-gmail` |
-| DF / SJM inbox | **11:00** and **20:00** | `--no-fetch-gmail` |
+| DF / SJM inbox | **11:00** | `--no-fetch-gmail` |
 
 ```bash
 # Install / reload after schedule changes
@@ -135,7 +135,7 @@ VENTAS_JOB_TAG=manual-inbox ./scripts/run_job.sh --no-fetch-gmail
 ./schedule/macos/uninstall_schedule.sh
 ```
 
-**DF/SJM habit:** drop register-report PDFs into `inbox/` before **11:00** or **20:00**.
+**DF/SJM habit:** drop **all** register-report PDFs for the day (both shifts) into `inbox/` before **11:00**. One daily run aggregates every PDF in the folder for that date/store.
 
 **Sleep:** if the Mac is fully asleep at a scheduled time, that run may be skipped. Keep it plugged in or allow wake for scheduled tasks.
 
