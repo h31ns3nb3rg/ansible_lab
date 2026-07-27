@@ -62,7 +62,37 @@ python run_ventas_sync.py --import-cierres "/path/to/Informe_avanzado_de_cierres
 
 Same-day shifts per store are summed. LMF rows are left alone.
 
+## Schedule (macOS LaunchAgents)
+
+| Job | Time (Mac local) | What it does |
+|---|---|---|
+| Gmail / LMF | **02:00** | `python run_ventas_sync.py --fetch-gmail` |
+| DF / SJM inbox | **11:00** | `python run_ventas_sync.py --no-fetch-gmail` (reads `inbox/`) |
+
+### Install (once)
+```bash
+cd ~/Cata-Ventas-Auto
+chmod +x scripts/run_job.sh schedule/macos/*.sh
+./schedule/macos/install_schedule.sh
+```
+
+### Daily DF/SJM habit
+Drop AdControl register-report PDFs into `~/Cata-Ventas-Auto/inbox/` **before 11:00**. The 11am job processes whatever is there (same-day shifts are summed).
+
+### Logs
+- Per-run: `logs/scheduled_gmail-2am_*.log`, `logs/scheduled_inbox-11am_*.log`
+- launchd: `logs/launchd_gmail.*.log`, `logs/launchd_inbox.*.log`
+
+### Manual / uninstall
+```bash
+VENTAS_JOB_TAG=manual-gmail ./scripts/run_job.sh --fetch-gmail
+VENTAS_JOB_TAG=manual-inbox ./scripts/run_job.sh --no-fetch-gmail
+./schedule/macos/uninstall_schedule.sh
+```
+
+**Sleep note:** if the Mac is fully asleep at 2am/11am, that run may be skipped until the next day. Keep it plugged in, or enable waking for scheduled tasks in Energy settings.
+
 ## Notes
-- Close Excel before running (OneDrive)
+- Close Excel before running when possible (OneDrive). If locked, updates go to `pending/` and flush on the next successful run.
 - Never commit `secrets/`
 - Multiple register shifts for the same store/day in one inbox run are **aggregated**

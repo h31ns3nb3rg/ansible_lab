@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.lacata.ventas.inbox</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>__INSTALL_ROOT__/scripts/run_job.sh</string>
+    <string>--no-fetch-gmail</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>__INSTALL_ROOT__</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>VENTAS_JOB_TAG</key>
+    <string>inbox-11am</string>
+    <key>PATH</key>
+    <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
+  </dict>
+
+  <!-- Local Mac timezone: every day at 11:00 — processes DF/SJM PDFs already in inbox/ -->
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>11</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <false/>
+
+  <key>StandardOutPath</key>
+  <string>__INSTALL_ROOT__/logs/launchd_inbox.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>__INSTALL_ROOT__/logs/launchd_inbox.err.log</string>
+</dict>
+</plist>
