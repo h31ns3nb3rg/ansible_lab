@@ -20,6 +20,8 @@ Edit `config.json`:
 
 ## Run
 
+Any PDF filename works (`ventas.pdf`, `ventas-2.pdf`, `Ventas (1).pdf`, etc.):
+
 ```bash
 # optional: check PDF extraction only
 python run_ventas_sync.py --parse-only samples/ventas.pdf
@@ -29,6 +31,7 @@ cp /path/to/daily.pdf inbox/
 python run_ventas_sync.py
 ```
 
+Dates are written as real Excel dates with the same Spanish long format as your sheet (`lunes 20 de julio de 2026`), and amounts use `RD$` formatting.
 ## What gets written
 
 | Excel column | Source |

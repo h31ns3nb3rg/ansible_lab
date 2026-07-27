@@ -16,6 +16,11 @@ from .pdf_parser import TotalesGenerales
 
 DEFAULT_UBICACIONES = ["La Cata LMF", "La Cata DF", "La Cata SJM"]
 
+# Match existing Ventas Diarias formatting (Spanish long date + RD$ amounts)
+DATE_FORMAT = '[$-1C0A]dddd\\ d" de "mmmm" de "yyyy;@'
+CURRENCY_FORMAT = '"RD$"\\ #,##0.00'
+CURRENCY_COLS = (3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)  # C–N
+
 
 @dataclass
 class DailySaleRow:
@@ -101,6 +106,12 @@ def _chronological_insert_row(ws: Worksheet, fecha: date) -> int:
     return _last_data_row(ws) + 1
 
 
+def _apply_row_formats(ws: Worksheet, row: int) -> None:
+    ws.cell(row, 1).number_format = DATE_FORMAT
+    for col in CURRENCY_COLS:
+        ws.cell(row, col).number_format = CURRENCY_FORMAT
+
+
 def _write_formulas(ws: Worksheet, row: int, fee_rate_cell: str) -> None:
     ws.cell(row, 5).value = f"=D{row}*{fee_rate_cell}"  # FEE
     ws.cell(row, 6).value = f"=D{row}-E{row}"  # TARJETA NETA
@@ -119,9 +130,11 @@ def _write_stub(ws: Worksheet, row: int, fecha: date, ubicacion: str, fee_rate_c
     ws.cell(row, 9).value = 0  # NOTAS CREDITO
     ws.cell(row, 12).value = 0  # ITBS
     _write_formulas(ws, row, fee_rate_cell)
+    _apply_row_formats(ws, row)
 
 
 def apply_row(ws: Worksheet, row: int, data: DailySaleRow, fee_rate_cell: str) -> None:
+    # Date only (midnight) — display format hides time (Spanish long date)
     ws.cell(row, 1).value = datetime.combine(data.fecha, datetime.min.time())
     ws.cell(row, 2).value = data.ubicacion
     ws.cell(row, 3).value = data.efectivo
@@ -134,6 +147,7 @@ def apply_row(ws: Worksheet, row: int, data: DailySaleRow, fee_rate_cell: str) -
         ws.cell(row, 12).value = 0
     # Never overwrite deposito (N / col 14) if already filled
     _write_formulas(ws, row, fee_rate_cell)
+    _apply_row_formats(ws, row)
 
 
 def _ensure_day_block(
@@ -193,6 +207,11 @@ def upsert_daily_sale(
     row = row_map[data.ubicacion]
     action = "updated" if data.ubicacion in before else "inserted"
     apply_row(ws, row, data, fee_rate_cell)
+    # Keep sibling stub rows on the same date visually consistent
+    for ubic, sibling_row in row_map.items():
+        if ubic != data.ubicacion:
+            _apply_row_formats(ws, sibling_row)
+            _write_formulas(ws, sibling_row, fee_rate_cell)
 
     wb.save(path)
     wb.close()

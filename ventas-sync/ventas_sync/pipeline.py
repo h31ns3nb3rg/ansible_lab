@@ -100,7 +100,14 @@ def process_inbox(config_path: str | Path = "config.json") -> list[dict[str, Any
         logging.info("Flushed pending: %s", item)
 
     results: list[dict[str, Any]] = []
-    pdfs = list(inbox.glob("*.pdf"))
+    # Accept any PDF name (ventas.pdf, ventas-2.pdf, Ventas (1).pdf, etc.)
+    pdfs = sorted(
+        {
+            *inbox.glob("*.pdf"),
+            *inbox.glob("*.PDF"),
+            *inbox.glob("*.Pdf"),
+        }
+    )
     if not pdfs:
         logging.info("No PDFs in inbox: %s", inbox)
         return results
