@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .excel_updater import flush_pending, totales_to_row, upsert_with_retry
+from .gmail_fetch import fetch_gmail_pdfs
 from .pdf_parser import parse_totales_generales
 
 
@@ -70,7 +71,11 @@ def process_pdf(pdf_path: Path, config: dict[str, Any], base_dir: Path) -> dict[
     return result
 
 
-def process_inbox(config_path: str | Path = "config.json") -> list[dict[str, Any]]:
+def process_inbox(
+    config_path: str | Path = "config.json",
+    *,
+    fetch_gmail: bool | None = None,
+) -> list[dict[str, Any]]:
     config_file = Path(config_path).resolve()
     base_dir = config_file.parent
     config = load_config(config_file)
@@ -92,6 +97,16 @@ def process_inbox(config_path: str | Path = "config.json") -> list[dict[str, Any
             f"Excel file not found. Update excel_path or wait for OneDrive to download:\n{excel_path}"
         )
 
+    should_fetch = (
+        fetch_gmail
+        if fetch_gmail is not None
+        else bool((config.get("gmail") or {}).get("enabled", False))
+    )
+    gmail_results: list[dict[str, Any]] = []
+    if should_fetch:
+        logging.info("Fetching PDFs from Gmail (OAuth read-only)")
+        gmail_results = fetch_gmail_pdfs(config, base_dir)
+
     logging.info("Flushing pending updates (if any)")
     ubicaciones = config.get("ubicaciones") or [
         "La Cata LMF",
@@ -110,7 +125,7 @@ def process_inbox(config_path: str | Path = "config.json") -> list[dict[str, Any
     for item in flushed:
         logging.info("Flushed pending: %s", item)
 
-    results: list[dict[str, Any]] = []
+    results: list[dict[str, Any]] = list(gmail_results)
     # Accept any PDF name (ventas.pdf, ventas-2.pdf, Ventas (1).pdf, etc.)
     pdfs = sorted(
         {

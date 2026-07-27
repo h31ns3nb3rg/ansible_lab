@@ -12,3 +12,7 @@ failed/*
 !inbox/.gitkeep
 !logs/.gitkeep
 .DS_Store
+secrets/*
+!secrets/README.md
+credentials.json
+token.json
