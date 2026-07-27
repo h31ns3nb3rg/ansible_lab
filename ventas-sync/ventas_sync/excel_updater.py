@@ -14,6 +14,8 @@ from openpyxl.worksheet.worksheet import Worksheet
 
 from .pdf_parser import TotalesGenerales
 
+DEFAULT_UBICACIONES = ["La Cata LMF", "La Cata DF", "La Cata SJM"]
+
 
 @dataclass
 class DailySaleRow:
@@ -46,7 +48,6 @@ def _as_date(value: Any) -> date | None:
     if isinstance(value, date):
         return value
     if isinstance(value, (int, float)):
-        # Excel serial fallback via openpyxl already gives datetime usually
         from openpyxl.utils.datetime import from_excel
 
         return from_excel(value).date()
@@ -68,12 +69,36 @@ def _find_row(ws: Worksheet, fecha: date, ubicacion: str) -> int | None:
     return None
 
 
-def _first_append_row(ws: Worksheet) -> int:
-    """First row where FECHA is empty (pre-seeded formula rows are OK to fill)."""
+def _rows_for_fecha(ws: Worksheet, fecha: date) -> dict[str, int]:
+    found: dict[str, int] = {}
     for row in range(2, ws.max_row + 1):
-        if ws.cell(row, 1).value is None and ws.cell(row, 2).value is None:
+        row_date = _as_date(ws.cell(row, 1).value)
+        if row_date != fecha:
+            continue
+        ubic = ws.cell(row, 2).value
+        if isinstance(ubic, str):
+            found[ubic] = row
+    return found
+
+
+def _last_data_row(ws: Worksheet) -> int:
+    last = 1
+    for row in range(2, ws.max_row + 1):
+        if ws.cell(row, 1).value is not None or ws.cell(row, 2).value is not None:
+            last = row
+    return last
+
+
+def _chronological_insert_row(ws: Worksheet, fecha: date) -> int:
+    """Row index where a new date block should start (1-based)."""
+    for row in range(2, ws.max_row + 1):
+        row_date = _as_date(ws.cell(row, 1).value)
+        if row_date is None:
+            # Hit the empty/pre-seeded zone — insert here
             return row
-    return ws.max_row + 1
+        if row_date > fecha:
+            return row
+    return _last_data_row(ws) + 1
 
 
 def _write_formulas(ws: Worksheet, row: int, fee_rate_cell: str) -> None:
@@ -83,14 +108,24 @@ def _write_formulas(ws: Worksheet, row: int, fee_rate_cell: str) -> None:
     ws.cell(row, 13).value = f"=J{row}-L{row}"  # VENTAS SIN ITBIS
 
 
+def _write_stub(ws: Worksheet, row: int, fecha: date, ubicacion: str, fee_rate_cell: str) -> None:
+    """Placeholder row for a location on a date (amounts 0 until filled)."""
+    ws.cell(row, 1).value = datetime.combine(fecha, datetime.min.time())
+    ws.cell(row, 2).value = ubicacion
+    ws.cell(row, 3).value = 0  # EFECTIVO
+    ws.cell(row, 4).value = 0  # TARJETA
+    ws.cell(row, 7).value = 0  # TRANSFERENCIAS
+    ws.cell(row, 8).value = None  # PEDIDOS YA
+    ws.cell(row, 9).value = 0  # NOTAS CREDITO
+    ws.cell(row, 12).value = 0  # ITBS
+    _write_formulas(ws, row, fee_rate_cell)
+
+
 def apply_row(ws: Worksheet, row: int, data: DailySaleRow, fee_rate_cell: str) -> None:
     ws.cell(row, 1).value = datetime.combine(data.fecha, datetime.min.time())
     ws.cell(row, 2).value = data.ubicacion
     ws.cell(row, 3).value = data.efectivo
     ws.cell(row, 4).value = data.tarjeta_bruta
-    # H PEDIDOS YA left alone if somehow set; default blank on new rows
-    if ws.cell(row, 8).value is None:
-        ws.cell(row, 8).value = None
     ws.cell(row, 7).value = data.transferencias
     ws.cell(row, 9).value = data.notas_credito
     if data.itbs_cobrado is not None:
@@ -101,30 +136,74 @@ def apply_row(ws: Worksheet, row: int, data: DailySaleRow, fee_rate_cell: str) -
     _write_formulas(ws, row, fee_rate_cell)
 
 
+def _ensure_day_block(
+    ws: Worksheet,
+    fecha: date,
+    ubicaciones: list[str],
+    fee_rate_cell: str,
+) -> dict[str, int]:
+    """Ensure one row per ubicacion for fecha, in order, chronologically placed."""
+    existing = _rows_for_fecha(ws, fecha)
+    if len(existing) == len(ubicaciones) and all(u in existing for u in ubicaciones):
+        return existing
+
+    if not existing:
+        insert_at = _chronological_insert_row(ws, fecha)
+        ws.insert_rows(insert_at, amount=len(ubicaciones))
+        row_map: dict[str, int] = {}
+        for offset, ubic in enumerate(ubicaciones):
+            row = insert_at + offset
+            _write_stub(ws, row, fecha, ubic, fee_rate_cell)
+            row_map[ubic] = row
+        return row_map
+
+    # Partial day exists — add missing ubicaciones after the day's last row,
+    # preferring configured order when possible.
+    for ubic in ubicaciones:
+        if ubic in existing:
+            continue
+        # Insert after the last row currently belonging to this fecha
+        current = _rows_for_fecha(ws, fecha)
+        after = max(current.values()) + 1
+        ws.insert_rows(after, amount=1)
+        _write_stub(ws, after, fecha, ubic, fee_rate_cell)
+
+    return _rows_for_fecha(ws, fecha)
+
+
 def upsert_daily_sale(
     excel_path: str | Path,
     sheet_name: str,
     data: DailySaleRow,
     fee_rate_cell: str = "Setup!$B$6",
+    ubicaciones: list[str] | None = None,
 ) -> dict[str, Any]:
     path = Path(excel_path)
     wb = load_workbook(path)
     if sheet_name not in wb.sheetnames:
         raise ValueError(f"Sheet not found: {sheet_name}")
     ws = wb[sheet_name]
+    locations = ubicaciones or DEFAULT_UBICACIONES
+    if data.ubicacion not in locations:
+        # Still allow the PDF ubicacion; put it first if unknown
+        locations = [data.ubicacion, *[u for u in locations if u != data.ubicacion]]
 
-    existing = _find_row(ws, data.fecha, data.ubicacion)
-    if existing is None:
-        row = _first_append_row(ws)
-        action = "inserted"
-    else:
-        row = existing
-        action = "updated"
-
+    before = _rows_for_fecha(ws, data.fecha)
+    row_map = _ensure_day_block(ws, data.fecha, locations, fee_rate_cell)
+    row = row_map[data.ubicacion]
+    action = "updated" if data.ubicacion in before else "inserted"
     apply_row(ws, row, data, fee_rate_cell)
+
     wb.save(path)
     wb.close()
-    return {"action": action, "row": row, "fecha": data.fecha.isoformat(), "ubicacion": data.ubicacion}
+    return {
+        "action": action,
+        "row": row,
+        "fecha": data.fecha.isoformat(),
+        "ubicacion": data.ubicacion,
+        "day_rows": row_map,
+        "created_locations": [u for u in locations if u not in before],
+    }
 
 
 def upsert_with_retry(
@@ -135,18 +214,24 @@ def upsert_with_retry(
     retries: int = 5,
     retry_seconds: float = 2.0,
     pending_path: str | Path | None = None,
+    ubicaciones: list[str] | None = None,
 ) -> dict[str, Any]:
     last_error: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
-            result = upsert_daily_sale(excel_path, sheet_name, data, fee_rate_cell)
+            result = upsert_daily_sale(
+                excel_path,
+                sheet_name,
+                data,
+                fee_rate_cell=fee_rate_cell,
+                ubicaciones=ubicaciones,
+            )
             result["attempts"] = attempt
             return result
         except PermissionError as exc:
             last_error = exc
             time.sleep(retry_seconds)
         except OSError as exc:
-            # Windows/Mac file lock often surfaces as OSError
             last_error = exc
             time.sleep(retry_seconds)
 
@@ -180,6 +265,7 @@ def flush_pending(
     fee_rate_cell: str = "Setup!$B$6",
     retries: int = 5,
     retry_seconds: float = 2.0,
+    ubicaciones: list[str] | None = None,
 ) -> list[dict[str, Any]]:
     path = Path(pending_path)
     if not path.exists():
@@ -205,6 +291,7 @@ def flush_pending(
             retries=retries,
             retry_seconds=retry_seconds,
             pending_path=None,
+            ubicaciones=ubicaciones,
         )
         if result.get("action") == "queued":
             remaining.append(item)

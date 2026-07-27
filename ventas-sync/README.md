@@ -43,9 +43,9 @@ python run_ventas_sync.py
 | FEE / NETA / TOTAL / VENTAS SIN ITBIS | Excel formulas (same as your sheet) |
 | DEPOSITO | left alone if already filled |
 
-Upsert key: **FECHA + UBICACION**. Other stores (DF / SJM) are not modified.
+Upsert key: **FECHA + UBICACION**. When a new date is added from the LMF PDF, the script also creates placeholder rows for **La Cata DF** and **La Cata SJM** (amounts 0 until filled). Multiple PDFs are processed oldest→newest and inserted in chronological order.
 
-## Schedule on Mac (optional)
+## Production switch
 
 Use `launchd` or cron to run periodically:
 

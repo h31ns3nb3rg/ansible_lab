@@ -43,6 +43,11 @@ def process_pdf(pdf_path: Path, config: dict[str, Any], base_dir: Path) -> dict[
     excel_path = _resolve(base_dir, config["excel_path"])
     totales = parse_totales_generales(pdf_path)
     row = totales_to_row(totales, config["ubicacion"])
+    ubicaciones = config.get("ubicaciones") or [
+        "La Cata LMF",
+        "La Cata DF",
+        "La Cata SJM",
+    ]
     result = upsert_with_retry(
         excel_path=excel_path,
         sheet_name=config["sheet_name"],
@@ -51,6 +56,7 @@ def process_pdf(pdf_path: Path, config: dict[str, Any], base_dir: Path) -> dict[
         retries=int(config.get("lock_retries", 5)),
         retry_seconds=float(config.get("lock_retry_seconds", 2)),
         pending_path=_resolve(base_dir, config.get("pending_path", "pending/updates.json")),
+        ubicaciones=ubicaciones,
     )
     result["source_pdf"] = str(pdf_path)
     result["efectivo"] = row.efectivo
@@ -76,6 +82,11 @@ def process_inbox(config_path: str | Path = "config.json") -> list[dict[str, Any
     pending_path = _resolve(base_dir, config.get("pending_path", "pending/updates.json"))
 
     logging.info("Flushing pending updates (if any)")
+    ubicaciones = config.get("ubicaciones") or [
+        "La Cata LMF",
+        "La Cata DF",
+        "La Cata SJM",
+    ]
     flushed = flush_pending(
         pending_path=pending_path,
         excel_path=excel_path,
@@ -83,17 +94,39 @@ def process_inbox(config_path: str | Path = "config.json") -> list[dict[str, Any
         fee_rate_cell=config.get("fee_rate_cell", "Setup!$B$6"),
         retries=int(config.get("lock_retries", 5)),
         retry_seconds=float(config.get("lock_retry_seconds", 2)),
+        ubicaciones=ubicaciones,
     )
     for item in flushed:
         logging.info("Flushed pending: %s", item)
 
     results: list[dict[str, Any]] = []
-    pdfs = sorted(inbox.glob("*.pdf"))
+    pdfs = list(inbox.glob("*.pdf"))
     if not pdfs:
         logging.info("No PDFs in inbox: %s", inbox)
         return results
 
+    # Parse first, then process oldest→newest so non-consecutive days land in order.
+    parsed: list[tuple[Any, Path]] = []
     for pdf in pdfs:
+        try:
+            totales = parse_totales_generales(pdf)
+            parsed.append((totales.fecha, pdf))
+        except Exception as exc:  # noqa: BLE001
+            logging.exception("Failed to parse %s: %s", pdf.name, exc)
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            dest = failed / f"{pdf.stem}_{stamp}{pdf.suffix}"
+            shutil.move(str(pdf), str(dest))
+            results.append(
+                {
+                    "action": "failed",
+                    "source_pdf": str(pdf),
+                    "archived_to": str(dest),
+                    "error": str(exc),
+                }
+            )
+    parsed.sort(key=lambda item: (item[0], item[1].name))
+
+    for _fecha, pdf in parsed:
         logging.info("Processing %s", pdf.name)
         try:
             result = process_pdf(pdf, config, base_dir)
