@@ -267,9 +267,6 @@ def upsert_daily_sale(
     fee_rate_cell: str = "Setup!$B$6",
     ubicaciones: list[str] | None = None,
 ) -> dict[str, Any]:
-    import shutil
-    import tempfile
-
     path = Path(excel_path).expanduser().resolve()
     if not path.exists():
         raise FileNotFoundError(f"Excel file not found: {path}")
@@ -297,21 +294,10 @@ def upsert_daily_sale(
             _apply_row_formats(ws, sibling_row)
             _write_formulas(ws, sibling_row, fee_rate_cell)
 
-    # Save via temp file then replace — more reliable with OneDrive locks/sync
-    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.stem}_", suffix=".xlsx", dir=str(path.parent))
-    tmp_path = Path(tmp_name)
-    try:
-        import os
-
-        os.close(fd)
-        wb.save(tmp_path)
-        wb.close()
-        shutil.move(str(tmp_path), str(path))
-    except Exception:
-        wb.close()
-        if tmp_path.exists():
-            tmp_path.unlink(missing_ok=True)
-        raise
+    # Save in place. Do NOT delete/replace the OneDrive file (that triggers
+    # "Deleted Files Are Removed Everywhere" and can drop the workbook).
+    wb.save(path)
+    wb.close()
 
     return {
         "action": action,
