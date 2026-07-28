@@ -139,6 +139,20 @@ VENTAS_JOB_TAG=manual-inbox ./scripts/run_job.sh --no-fetch-gmail
 
 **Sleep:** if the Mac is fully asleep at a scheduled time, that run may be skipped. Keep it plugged in or allow wake for scheduled tasks.
 
+### Notifications (macOS)
+
+Scheduled jobs (and `./scripts/run_job.sh …`) show a **Notification Center** banner when the run finishes:
+
+| Result | Banner |
+|---|---|
+| Success (exit 0) | `La Cata Ventas` / `OK` — rows written / Gmail summary |
+| Excel locked (exit 2) | `La Cata Ventas` / `WARN` — queued to `pending/` |
+| Failure (exit 1+) | `La Cata Ventas` / `FAILED` — exit code + summary |
+
+Disable for one run: `VENTAS_NOTIFY=0 ./scripts/run_job.sh --fetch-gmail`
+
+Direct `python run_ventas_sync.py …` calls do **not** notify — use the wrapper for banners.
+
 ### Logs
 
 | Location | What |
