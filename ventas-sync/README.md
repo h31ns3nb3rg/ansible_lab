@@ -124,7 +124,7 @@ VENTAS_JOB_TAG=manual-inbox ./scripts/run_job.sh --no-fetch-gmail
 
 | Job | Times (Mac local) | Command |
 |---|---|---|
-| Gmail / LMF | **02:00** and **19:00** | `--fetch-gmail` |
+| Gmail / LMF | **02:00** | `--fetch-gmail` |
 | DF / SJM inbox | **11:00** | `--no-fetch-gmail` |
 
 ```bash
