@@ -4,8 +4,8 @@ Syncs daily sales into **`Ventas Diarias`** in `LaCata_Contabilidad_v3.xlsx` (On
 
 | Store | Source | How it gets in |
 |---|---|---|
-| **La Cata LMF** | Gmail PDF `RESUMEN DE VENTAS Y COBROS` | Auto fetch 02:00, or drop PDF in `inbox/` |
-| **La Cata DF** | AdControl **Informe avanzado de cierres de caja** `.xlsx` | Drop export in `inbox/` (11:00 job) |
+| **La Cata LMF** | Gmail PDF `RESUMEN DE VENTAS Y COBROS` | Auto fetch 01:00 & 11:00, or drop PDF in `inbox/` |
+| **La Cata DF** | AdControl **Informe avanzado de cierres de caja** `.xlsx` | Drop export in `inbox/` (01:00 & 11:00 job) |
 | **La Cata SJM** | Same cierres `.xlsx` | Same file — both stores in one export |
 
 Upsert key: **`FECHA + UBICACION`**. Always keeps **3 rows per day** (LMF, DF, SJM).
@@ -125,15 +125,15 @@ VENTAS_JOB_TAG=manual-inbox ./scripts/run_job.sh --no-fetch-gmail
 
 | Job | Times (Mac local) | Command |
 |---|---|---|
-| Gmail / LMF | **02:00** | `--fetch-gmail` |
-| DF / SJM inbox | **11:00** | `--no-fetch-gmail` (reads cierres `.xlsx` in `inbox/`) |
+| Gmail / LMF | **01:00** and **11:00** | `--fetch-gmail` |
+| DF / SJM inbox | **01:00** and **11:00** | `--no-fetch-gmail` (reads cierres `.xlsx` in `inbox/`) |
 
 ```bash
 ./schedule/macos/install_schedule.sh
 ./schedule/macos/uninstall_schedule.sh
 ```
 
-**DF/SJM habit:** export AdControl cierres Excel and drop it in `inbox/` **before 11:00**. Include both stores / both shifts in that export.
+**DF/SJM habit:** export AdControl cierres Excel and drop it in `inbox/` **before 01:00 or 11:00**. Include both stores / both shifts in that export.
 
 **Sleep:** if the Mac is fully asleep at a scheduled time, that run may be skipped. Keep it plugged in or allow wake for scheduled tasks.
 
