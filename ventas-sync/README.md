@@ -169,10 +169,22 @@ Direct `python run_ventas_sync.py …` calls do **not** notify — use the wrapp
 
 ### Register PDF (DF / SJM)
 
+**Location key (required):** only the PDF field
+`Ubicación comercial: LA CATA LIQUOR STORE Y SUPER MARKET (SAN JUAN|DEFILLO)`
+
+| Marker | Excel UBICACION |
+|---|---|
+| `(SAN JUAN)` | `La Cata SJM` |
+| `(DEFILLO)` | `La Cata DF` |
+
+Use the **per-caja detail** report (one store, one shift). Do **not** drop the multi-store list/summary PDF (it mentions both stores).
+
+Rename downloads if needed (`…-SJM-am.pdf`, `…-DF-pm.pdf`) so two stores do not overwrite the same filename in `inbox/`.
+
 | Excel column | PDF field |
 |---|---|
 | FECHA | Start date from `Detalles de caja (...)` |
-| UBICACION | `(SAN JUAN)` → `La Cata SJM`, `(DEFILLO)` → `La Cata DF` |
+| UBICACION | From `Ubicación comercial` only (see above) |
 | EFECTIVO | `Efectivo del Dia` |
 | TARJETA (BRUTA) | `Pago con tarjeta` |
 | TRANSFERENCIAS | `Transferencia bancaria` + `Otros pagos` |

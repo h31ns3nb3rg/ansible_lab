@@ -106,16 +106,51 @@ def _parse_caja_date(text: str) -> date:
 
 
 def _parse_ubicacion(text: str) -> str:
-    # Ubicación comercial: ... (SAN JUAN) or (DEFILLO)
-    compact = _strip_accents(text).upper()
-    if "SAN JUAN" in compact:
-        return "La Cata SJM"
-    if "DEFILLO" in compact:
-        return "La Cata DF"
-    raise ValueError(
-        "Could not map location in register PDF. Expected SAN JUAN or DEFILLO in "
-        "'Ubicación comercial'."
+    """Map store from 'Ubicación comercial: ... (SAN JUAN|DEFILLO)' only.
+
+    Do not scan the whole PDF — list/summary exports can mention both stores
+    and would otherwise mis-tag every row as the first match (SAN JUAN).
+    """
+    compact = _strip_accents(text)
+    match = re.search(
+        r"Ubicacion comercial:\s*(.+?)(?=\n\s*(?:Usuario|Detalles de caja|Fecha|Impuesto)\b|\Z)",
+        compact,
+        flags=re.IGNORECASE | re.DOTALL,
     )
+    if not match:
+        raise ValueError(
+            "Could not find 'Ubicación comercial' in register PDF. "
+            "Use the per-caja detail report (not the multi-store list)."
+        )
+
+    # Allow wrapped lines: "LA CATA ... Y\nSUPER MARKET (SAN JUAN)"
+    block = " ".join(match.group(1).split())
+    block_upper = block.upper()
+
+    has_sjm = bool(re.search(r"\(\s*SAN\s+JUAN\s*\)", block_upper))
+    has_df = bool(re.search(r"\(\s*DEFILLO\s*\)", block_upper))
+
+    if has_sjm and has_df:
+        raise ValueError(
+            "Ambiguous Ubicación comercial (both SAN JUAN and DEFILLO). "
+            "Use a single-store register detail PDF."
+        )
+    if has_sjm:
+        return "La Cata SJM"
+    if has_df:
+        return "La Cata DF"
+
+    # Fallback: marker without parentheses, still only inside this field
+    if "SAN JUAN" in block_upper and "DEFILLO" not in block_upper:
+        return "La Cata SJM"
+    if "DEFILLO" in block_upper and "SAN JUAN" not in block_upper:
+        return "La Cata DF"
+
+    raise ValueError(
+        "Could not map location in Ubicación comercial (expected (SAN JUAN) or "
+        f"(DEFILLO)). Got: {block[:120]!r}"
+    )
+
 
 
 @dataclass

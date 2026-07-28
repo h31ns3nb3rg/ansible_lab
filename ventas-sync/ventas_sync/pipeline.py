@@ -193,6 +193,15 @@ def process_inbox(
             elif kind == "adcontrol_register":
                 report = parse_register_report(pdf)
                 row = register_to_row(report)
+                logging.info(
+                    "Register PDF %s → %s %s efectivo=%s tarjeta=%s xfer=%s",
+                    pdf.name,
+                    row.ubicacion,
+                    row.fecha,
+                    row.efectivo,
+                    row.tarjeta_bruta,
+                    row.transferencias,
+                )
                 key = (row.fecha, row.ubicacion)
                 register_sources[key].append(pdf)
                 if key not in register_agg:

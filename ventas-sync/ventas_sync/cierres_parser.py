@@ -100,9 +100,18 @@ def _parse_datetime(value: Any) -> datetime:
 
 def _map_ubicacion(raw: Any) -> str:
     compact = _strip_accents(str(raw or "")).upper()
-    for marker, ubicacion in _LOCATION_MARKERS:
-        if marker in compact:
-            return ubicacion
+    has_sjm = bool(re.search(r"\(\s*SAN\s+JUAN\s*\)", compact)) or (
+        "SAN JUAN" in compact and "DEFILLO" not in compact
+    )
+    has_df = bool(re.search(r"\(\s*DEFILLO\s*\)", compact)) or (
+        "DEFILLO" in compact and "SAN JUAN" not in compact
+    )
+    if has_sjm and has_df:
+        raise ValueError(f"Ambiguous ubicación in cierres export: {raw!r}")
+    if has_sjm:
+        return "La Cata SJM"
+    if has_df:
+        return "La Cata DF"
     raise ValueError(f"Unknown ubicación in cierres export: {raw!r}")
 
 
