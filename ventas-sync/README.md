@@ -149,6 +149,15 @@ Scheduled jobs (and `./scripts/run_job.sh …`) show a **Notification Center** b
 
 Disable for one run: `VENTAS_NOTIFY=0 ./scripts/run_job.sh --fetch-gmail`
 
+### Sanity report (DF/SJM)
+
+Every run that imports a cierres `.xlsx` writes a validation block to logs and CLI output:
+
+- log lines start with `SANITY ...`
+- one line per `fecha + ubicacion` showing `ef`, `tj`, `xf`, `py`
+
+This is intended for quick reconciliation before/after the Excel write.
+
 ### Logs
 
 | Location | What |

@@ -61,6 +61,40 @@ def _archive(pdf: Path, folder: Path) -> Path:
     return dest
 
 
+def _build_sanity_report(rows: list[DailySaleRow]) -> list[dict[str, Any]]:
+    """Create a deterministic per-date/store summary for validation."""
+    ordered = sorted(rows, key=lambda r: (r.fecha, r.ubicacion))
+    return [
+        {
+            "fecha": row.fecha.isoformat(),
+            "ubicacion": row.ubicacion,
+            "efectivo": row.efectivo,
+            "tarjeta_bruta": row.tarjeta_bruta,
+            "transferencias": row.transferencias,
+            "pedidos_ya": row.pedidos_ya,
+        }
+        for row in ordered
+    ]
+
+
+def _log_sanity_report(tag: str, entries: list[dict[str, Any]]) -> None:
+    if not entries:
+        logging.info("Sanity %s: no rows", tag)
+        return
+    logging.info("Sanity %s: %s row(s)", tag, len(entries))
+    for entry in entries:
+        logging.info(
+            "SANITY %s %s %s ef=%s tj=%s xf=%s py=%s",
+            tag,
+            entry["fecha"],
+            entry["ubicacion"],
+            entry["efectivo"],
+            entry["tarjeta_bruta"],
+            entry["transferencias"],
+            entry["pedidos_ya"],
+        )
+
+
 def _write_row(
     row: DailySaleRow,
     config: dict[str, Any],
@@ -197,6 +231,15 @@ def process_inbox(
                 summary["date_to"],
                 summary["by_ubicacion"],
             )
+            sanity_entries = _build_sanity_report(rows)
+            _log_sanity_report(f"cierres:{xlsx.name}", sanity_entries)
+            results.append(
+                {
+                    "action": "sanity_report",
+                    "source": str(xlsx),
+                    "rows": sanity_entries,
+                }
+            )
             for row in rows:
                 logging.info(
                     "Cierres row %s %s ef=%s tj=%s xf=%s py=%s",
@@ -244,8 +287,11 @@ def process_inbox(
     register_pdfs_enabled = bool(config.get("register_pdfs_enabled", False))
     if not pdfs and not cierres_jobs:
         logging.info("No cierres Excel or PDFs in inbox: %s", inbox)
+        results.append({"action": "sanity_report", "source": "inbox", "rows": []})
         return results
     if not pdfs:
+        if not any(item.get("action") == "sanity_report" for item in results):
+            results.append({"action": "sanity_report", "source": "inbox", "rows": []})
         return results
 
     lmf_jobs: list[tuple[date, Path, DailySaleRow]] = []
@@ -430,6 +476,8 @@ def import_cierres_excel(
         summary["date_to"],
     )
     logging.info("By ubicación: %s", summary["by_ubicacion"])
+    sanity_entries = _build_sanity_report(rows)
+    _log_sanity_report(f"import:{source.name}", sanity_entries)
 
     payload: dict[str, Any] = {
         "action": "import_cierres_dry_run" if dry_run else "import_cierres",
@@ -448,6 +496,7 @@ def import_cierres_excel(
             }
             for r in rows[:10]
         ],
+        "sanity_report": sanity_entries,
     }
     if dry_run:
         payload["rows"] = [

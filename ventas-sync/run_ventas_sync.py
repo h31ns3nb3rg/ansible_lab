@@ -148,6 +148,7 @@ def main() -> int:
     written = [r for r in results if r.get("action") in {"inserted", "updated"}]
     failed = [r for r in results if r.get("action") == "failed"]
     queued = [r for r in results if r.get("action") == "queued"]
+    sanity_reports = [r for r in results if r.get("action") == "sanity_report"]
 
     print("\n=== Run resume ===")
     if gmail_summary:
@@ -166,6 +167,17 @@ def main() -> int:
         print(f"Failed: {len(failed)}")
     if queued:
         print(f"Queued (Excel locked): {len(queued)}")
+    for report in sanity_reports:
+        rows = report.get("rows") or []
+        source = report.get("source", "unknown")
+        print(f"Sanity report ({source}): {len(rows)} row(s)")
+        for entry in rows:
+            print(
+                "  "
+                f"{entry.get('fecha')} | {entry.get('ubicacion')} | "
+                f"ef={entry.get('efectivo')} tj={entry.get('tarjeta_bruta')} "
+                f"xf={entry.get('transferencias')} py={entry.get('pedidos_ya')}"
+            )
     print("==================\n")
 
     print(json.dumps(results, indent=2, default=str))
