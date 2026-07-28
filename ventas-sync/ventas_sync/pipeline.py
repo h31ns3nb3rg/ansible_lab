@@ -12,6 +12,7 @@ from typing import Any
 
 from .cierres_parser import (
     aggregate_cierres,
+    is_cierres_workbook,
     parse_cierres_workbook,
     summarize_cierres,
 )
@@ -166,6 +167,72 @@ def process_inbox(
         logging.info("Flushed pending: %s", item)
 
     results: list[dict[str, Any]] = list(gmail_results)
+
+    # --- DF / SJM primary source: Informe avanzado de cierres de caja (.xlsx) ---
+    cierres_files = sorted(
+        {
+            *inbox.glob("*.xlsx"),
+            *inbox.glob("*.XLSX"),
+            *inbox.glob("*.xlsm"),
+            *inbox.glob("*.XLSM"),
+        }
+    )
+    cierres_jobs = [p for p in cierres_files if is_cierres_workbook(p)]
+    for other in cierres_files:
+        if other not in cierres_jobs:
+            logging.warning("Skipping non-cierres Excel in inbox: %s", other.name)
+
+    for xlsx in cierres_jobs:
+        logging.info("Processing cierres Excel %s (DF/SJM)", xlsx.name)
+        try:
+            shifts = parse_cierres_workbook(xlsx)
+            rows = aggregate_cierres(shifts)
+            summary = summarize_cierres(rows)
+            logging.info(
+                "Cierres %s: %s shifts → %s rows (%s → %s) %s",
+                xlsx.name,
+                len(shifts),
+                summary["days_locations"],
+                summary["date_from"],
+                summary["date_to"],
+                summary["by_ubicacion"],
+            )
+            for row in rows:
+                logging.info(
+                    "Cierres row %s %s ef=%s tj=%s xf=%s py=%s",
+                    row.fecha,
+                    row.ubicacion,
+                    row.efectivo,
+                    row.tarjeta_bruta,
+                    row.transferencias,
+                    row.pedidos_ya,
+                )
+                result = _write_row(row, config, base_dir, [str(xlsx)])
+                result["pdf_kind"] = "cierres_xlsx"
+                result["source_xlsx"] = str(xlsx)
+                results.append(result)
+            dest = _archive(xlsx, processed)
+            results.append(
+                {
+                    "action": "cierres_archived",
+                    "source_xlsx": str(xlsx),
+                    "archived_to": str(dest),
+                    "shifts": len(shifts),
+                    **summary,
+                }
+            )
+        except Exception as exc:  # noqa: BLE001
+            logging.exception("Failed cierres Excel %s: %s", xlsx.name, exc)
+            dest = _archive(xlsx, failed)
+            results.append(
+                {
+                    "action": "failed",
+                    "source_xlsx": str(xlsx),
+                    "archived_to": str(dest),
+                    "error": str(exc),
+                }
+            )
+
     pdfs = sorted(
         {
             *inbox.glob("*.pdf"),
@@ -173,12 +240,16 @@ def process_inbox(
             *inbox.glob("*.Pdf"),
         }
     )
+    # Register PDFs are off by default — DF/SJM come from cierres Excel.
+    register_pdfs_enabled = bool(config.get("register_pdfs_enabled", False))
+    if not pdfs and not cierres_jobs:
+        logging.info("No cierres Excel or PDFs in inbox: %s", inbox)
+        return results
     if not pdfs:
-        logging.info("No PDFs in inbox: %s", inbox)
         return results
 
     lmf_jobs: list[tuple[date, Path, DailySaleRow]] = []
-    # Aggregate register shifts by (fecha, ubicacion)
+    # Aggregate register shifts by (fecha, ubicacion) — only if enabled
     register_agg: dict[tuple[date, str], DailySaleRow] = {}
     register_sources: dict[tuple[date, str], list[Path]] = defaultdict(list)
 
@@ -191,6 +262,22 @@ def process_inbox(
                 row = totales_to_row(totales, config["ubicacion"])
                 lmf_jobs.append((row.fecha, pdf, row))
             elif kind == "adcontrol_register":
+                if not register_pdfs_enabled:
+                    logging.warning(
+                        "Skipping register PDF %s — DF/SJM default is cierres Excel "
+                        "(set register_pdfs_enabled=true to re-enable)",
+                        pdf.name,
+                    )
+                    dest = _archive(pdf, processed)
+                    results.append(
+                        {
+                            "action": "skipped_register_pdf",
+                            "source_pdf": str(pdf),
+                            "archived_to": str(dest),
+                            "reason": "df_sjm_source=cierres_xlsx",
+                        }
+                    )
+                    continue
                 report = parse_register_report(pdf)
                 row = register_to_row(report)
                 logging.info(
@@ -219,7 +306,10 @@ def process_inbox(
                         pedidos_ya=(existing.pedidos_ya or 0) + (row.pedidos_ya or 0),
                     )
             else:
-                raise ValueError("Unrecognized PDF type (expected LMF ventas or AdControl register report)")
+                raise ValueError(
+                    "Unrecognized PDF type (expected LMF ventas PDF). "
+                    "For DF/SJM drop Informe avanzado de cierres de caja .xlsx instead."
+                )
         except Exception as exc:  # noqa: BLE001
             logging.exception("Failed to parse %s: %s", pdf.name, exc)
             dest = _archive(pdf, failed)
@@ -259,7 +349,7 @@ def process_inbox(
                 }
             )
 
-    # Process aggregated register reports oldest→newest
+    # Process aggregated register reports oldest→newest (legacy / opt-in)
     for key in sorted(register_agg.keys(), key=lambda k: (k[0], k[1])):
         row = register_agg[key]
         sources = register_sources[key]

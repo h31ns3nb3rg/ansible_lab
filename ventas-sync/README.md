@@ -4,10 +4,9 @@ Syncs daily sales into **`Ventas Diarias`** in `LaCata_Contabilidad_v3.xlsx` (On
 
 | Store | Source | How it gets in |
 |---|---|---|
-| **La Cata LMF** | Gmail PDF `RESUMEN DE VENTAS Y COBROS` | Auto fetch, or drop PDF in `inbox/` |
-| **La Cata DF** | AdControl register-report PDF | Drop PDF in `inbox/` |
-| **La Cata SJM** | AdControl register-report PDF | Drop PDF in `inbox/` |
-| **DF / SJM backfill** | AdControl *Informe avanzado de cierres de caja* `.xlsx` | One-time / bulk `--import-cierres` |
+| **La Cata LMF** | Gmail PDF `RESUMEN DE VENTAS Y COBROS` | Auto fetch 02:00, or drop PDF in `inbox/` |
+| **La Cata DF** | AdControl **Informe avanzado de cierres de caja** `.xlsx` | Drop export in `inbox/` (11:00 job) |
+| **La Cata SJM** | Same cierres `.xlsx` | Same file — both stores in one export |
 
 Upsert key: **`FECHA + UBICACION`**. Always keeps **3 rows per day** (LMF, DF, SJM).
 
@@ -32,7 +31,7 @@ source .venv/bin/activate
 python run_ventas_sync.py --auth-gmail
 ```
 
-4. Install the daily schedule (optional but recommended):
+4. Install the daily schedule:
 
 ```bash
 chmod +x scripts/run_job.sh schedule/macos/*.sh
@@ -58,19 +57,33 @@ source .venv/bin/activate
 python run_ventas_sync.py --fetch-gmail
 ```
 
-Downloads matching `VENTAS Y COBROS` PDFs, processes them, writes `Ventas Diarias`.
+### 2) DF / SJM — daily cierres Excel (default)
 
-### 2) DF / SJM — process PDFs already in `inbox/`
-
-1. In AdControl, open each cash-register detail and save/print as PDF.
-2. Copy the PDFs into `~/Cata-Ventas-Auto/inbox/`.
+1. In AdControl, export **Informe avanzado de cierres de caja** (`.xlsx`) for the day/range you need.
+2. Drop the file into `~/Cata-Ventas-Auto/inbox/`.
 3. Run:
 
 ```bash
+cd ~/Cata-Ventas-Auto
+source .venv/bin/activate
 python run_ventas_sync.py --no-fetch-gmail
 ```
 
-Same-day shifts for the same store are **summed**. PDF type is auto-detected.
+Or import a path directly:
+
+```bash
+python run_ventas_sync.py --import-cierres "/full/path/to/Informe_avanzado_de_cierres_de_caja.xlsx" --dry-run
+python run_ventas_sync.py --import-cierres "/full/path/to/Informe_avanzado_de_cierres_de_caja.xlsx"
+```
+
+**Jul 27 example from your export (both shifts summed):**
+
+| Store | EFECTIVO | TARJETA | PEDIDOS YA |
+|---|---|---|---|
+| La Cata SJM | **48225.00** | 10210.00 | 0 |
+| La Cata DF | **9915.00** | 3005.00 | 1580.00 |
+
+EFECTIVO = `Cantidad de cierre` (same as PDF `Efectivo del Dia`). Location from `Ubicación` column `(SAN JUAN)` / `(DEFILLO)`.
 
 ### 3) LMF PDF without Gmail
 
@@ -80,25 +93,13 @@ Drop a `VENTAS Y COBROS` PDF into `inbox/`, then:
 python run_ventas_sync.py --no-fetch-gmail
 ```
 
-### 4) Bulk backfill DF / SJM from cierres Excel
-
-Export **Informe avanzado de cierres de caja** from AdControl, then:
-
-```bash
-# Preview only (no Excel write)
-python run_ventas_sync.py --import-cierres "/full/path/to/Informe_avanzado_de_cierres_de_caja.xlsx" --dry-run
-
-# Write into the workbook (close Excel first)
-python run_ventas_sync.py --import-cierres "/full/path/to/Informe_avanzado_de_cierres_de_caja.xlsx"
-```
-
-### 5) Parse one PDF (debug, no Excel write)
+### 4) Parse one LMF PDF (debug, no Excel write)
 
 ```bash
 python run_ventas_sync.py --parse-only "/full/path/to/file.pdf"
 ```
 
-### 6) Manual run via the scheduled wrapper (writes under `logs/`)
+### 5) Manual run via the scheduled wrapper (Notification Center banners)
 
 ```bash
 VENTAS_JOB_TAG=manual-gmail ./scripts/run_job.sh --fetch-gmail
@@ -111,11 +112,11 @@ VENTAS_JOB_TAG=manual-inbox ./scripts/run_job.sh --no-fetch-gmail
 |---|---|
 | `--auth-gmail` | One-time OAuth login; saves `secrets/token.json` |
 | `--fetch-gmail` | Download LMF PDFs from Gmail, then process inbox |
-| `--no-fetch-gmail` | Process `inbox/` only (DF/SJM and/or dropped LMF PDFs) |
-| `--import-cierres FILE` | Bulk-load DF/SJM from cierres `.xlsx` |
+| `--no-fetch-gmail` | Process `inbox/` only (cierres `.xlsx` + LMF PDFs) |
+| `--import-cierres FILE` | Import DF/SJM from a cierres `.xlsx` path |
 | `--dry-run` | With `--import-cierres`: parse/summarize only |
 | `--excel FILE` | Override workbook path (testing a copy) |
-| `--parse-only PDF` | Print parsed totals as JSON |
+| `--parse-only PDF` | Print parsed LMF totals as JSON |
 | `--config PATH` | Alternate config (default: `config.json`) |
 
 ---
@@ -125,17 +126,14 @@ VENTAS_JOB_TAG=manual-inbox ./scripts/run_job.sh --no-fetch-gmail
 | Job | Times (Mac local) | Command |
 |---|---|---|
 | Gmail / LMF | **02:00** | `--fetch-gmail` |
-| DF / SJM inbox | **11:00** | `--no-fetch-gmail` |
+| DF / SJM inbox | **11:00** | `--no-fetch-gmail` (reads cierres `.xlsx` in `inbox/`) |
 
 ```bash
-# Install / reload after schedule changes
 ./schedule/macos/install_schedule.sh
-
-# Remove
 ./schedule/macos/uninstall_schedule.sh
 ```
 
-**DF/SJM habit:** drop **all** register-report PDFs for the day (both shifts) into `inbox/` before **11:00**. One daily run aggregates every PDF in the folder for that date/store.
+**DF/SJM habit:** export AdControl cierres Excel and drop it in `inbox/` **before 11:00**. Include both stores / both shifts in that export.
 
 **Sleep:** if the Mac is fully asleep at a scheduled time, that run may be skipped. Keep it plugged in or allow wake for scheduled tasks.
 
@@ -145,13 +143,11 @@ Scheduled jobs (and `./scripts/run_job.sh …`) show a **Notification Center** b
 
 | Result | Banner |
 |---|---|
-| Success (exit 0) | `La Cata Ventas` / `OK` — rows written / Gmail summary |
-| Excel locked (exit 2) | `La Cata Ventas` / `WARN` — queued to `pending/` |
-| Failure (exit 1+) | `La Cata Ventas` / `FAILED` — exit code + summary |
+| Success (exit 0) | `La Cata Ventas` / `OK` |
+| Excel locked (exit 2) | `La Cata Ventas` / `WARN` |
+| Failure (exit 1+) | `La Cata Ventas` / `FAILED` |
 
 Disable for one run: `VENTAS_NOTIFY=0 ./scripts/run_job.sh --fetch-gmail`
-
-Direct `python run_ventas_sync.py …` calls do **not** notify — use the wrapper for banners.
 
 ### Logs
 
@@ -167,40 +163,20 @@ Direct `python run_ventas_sync.py …` calls do **not** notify — use the wrapp
 
 ## Field mapping
 
-### Register PDF (DF / SJM)
-
-**Location key (required):** only the PDF field
-`Ubicación comercial: LA CATA LIQUOR STORE Y SUPER MARKET (SAN JUAN|DEFILLO)`
-
-| Marker | Excel UBICACION |
-|---|---|
-| `(SAN JUAN)` | `La Cata SJM` |
-| `(DEFILLO)` | `La Cata DF` |
-
-Use the **per-caja detail** report (one store, one shift). Do **not** drop the multi-store list/summary PDF (it mentions both stores).
-
-Rename downloads if needed (`…-SJM-am.pdf`, `…-DF-pm.pdf`) so two stores do not overwrite the same filename in `inbox/`.
-
-| Excel column | PDF field |
-|---|---|
-| FECHA | Start date from `Detalles de caja (...)` |
-| UBICACION | From `Ubicación comercial` only (see above) |
-| EFECTIVO | `Efectivo del Dia` |
-| TARJETA (BRUTA) | `Pago con tarjeta` |
-| TRANSFERENCIAS | `Transferencia bancaria` + `Otros pagos` |
-| PEDIDOS YA | `PedidosYA` |
-| ITBS COBRADO | `Impuesto` |
-
-### Cierres Excel (bulk DF / SJM)
+### Cierres Excel (DF / SJM — default)
 
 | Excel column | Cierres column |
 |---|---|
 | FECHA | Date from `Hora de apertura` |
 | UBICACION | `(SAN JUAN)` → `La Cata SJM`, `(DEFILLO)` → `La Cata DF` |
-| EFECTIVO | `Cantidad de cierre` (same as PDF `Efectivo del Dia`) |
+| EFECTIVO | `Cantidad de cierre` |
 | TARJETA (BRUTA) | `Total en pago con tarjeta` |
 | TRANSFERENCIAS | `Transeferencia bancaria` + `Total en otros pagos` |
 | PEDIDOS YA | `Total en PedidosYA` |
+
+Same-day shifts per store are summed. LMF rows are left alone.
+
+Register-report PDFs for DF/SJM are **disabled by default** (`register_pdfs_enabled: false`). Set `true` in `config.json` only if you need the old PDF path.
 
 ### Derived Excel formulas (unchanged)
 
@@ -217,9 +193,9 @@ Filled **DEPOSITO EFECTIVO** is never overwritten.
 
 | Folder | Role |
 |---|---|
-| `inbox/` | Drop PDFs here to process |
-| `processed/` | Successfully handled PDFs |
-| `failed/` | PDFs that failed to parse/write |
+| `inbox/` | Drop cierres `.xlsx` (DF/SJM) and optional LMF PDFs |
+| `processed/` | Successfully handled files |
+| `failed/` | Files that failed to parse/write |
 | `pending/` | Queued Excel updates when the file was locked |
 | `logs/` | Run logs |
 | `secrets/` | `credentials.json` + `token.json` (do not commit) |
@@ -231,10 +207,11 @@ Filled **DEPOSITO EFECTIVO** is never overwritten.
 | Symptom | What to do |
 |---|---|
 | Excel locked / OneDrive “in use” | Close Excel; re-run. Updates may sit in `pending/` until the next successful run. |
-| Gmail 403 / consent | Add your Google account as a test user on the OAuth consent screen; re-run `--auth-gmail`. |
-| `--import-cierres` unrecognized | Your folder is on an old copy — refresh from the latest branch, then retry. |
-| Schedule did not fire | Check Mac sleep; confirm agents with `launchctl print gui/$(id -u)/com.lacata.ventas.gmail` (and `.inbox`). Re-run `install_schedule.sh`. |
-| Wrong / missing store | Confirm PDF has `(DEFILLO)` or `(SAN JUAN)` in ubicación comercial. |
+| Wrong DF/SJM totals | Re-export cierres Excel, drop in `inbox/`, run `--no-fetch-gmail`. Check log lines `Cierres row …`. |
+| Register PDFs ignored | Expected — use cierres `.xlsx`. Or set `register_pdfs_enabled: true`. |
+| Gmail 403 / consent | Add your Google account as a test user; re-run `--auth-gmail`. |
+| Schedule did not fire | Check Mac sleep; re-run `install_schedule.sh`. |
+| `can't open file .../tmp/run_ventas_sync.py` | `cd ~/Cata-Ventas-Auto` before running Python. |
 
 ---
 
@@ -251,6 +228,5 @@ rsync -a --exclude 'secrets' --exclude 'config.json' --exclude '.venv' \
   --exclude 'pending' --exclude 'logs' \
   /tmp/ansible_lab_tmp/ventas-sync/ ~/Cata-Ventas-Auto/
 
-# If schedule files changed:
 cd ~/Cata-Ventas-Auto && ./schedule/macos/install_schedule.sh
 ```

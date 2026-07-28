@@ -248,3 +248,27 @@ def summarize_cierres(rows: list[DailySaleRow]) -> dict[str, Any]:
         "date_from": rows[0].fecha.isoformat() if rows else None,
         "date_to": rows[-1].fecha.isoformat() if rows else None,
     }
+
+
+def is_cierres_workbook(path: str | Path) -> bool:
+    """True if workbook looks like AdControl 'Informe avanzado de cierres de caja'."""
+    path = Path(path)
+    if path.suffix.lower() not in {".xlsx", ".xlsm"}:
+        return False
+    # Fast path: common export filename
+    name = path.name.lower()
+    if "cierres" in name and "caja" in name:
+        return True
+    try:
+        wb = load_workbook(path, data_only=True, read_only=True)
+        try:
+            ws = wb.active
+            header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
+            if not header_row:
+                return False
+            _resolve_headers(list(header_row))
+            return True
+        finally:
+            wb.close()
+    except Exception:
+        return False

@@ -56,7 +56,7 @@ fi
 echo
 echo "Installed LaunchAgents:"
 echo "  $AGENTS_DIR/${LABEL_GMAIL}.plist   → daily 02:00  (--fetch-gmail)"
-echo "  $AGENTS_DIR/${LABEL_INBOX}.plist   → daily 11:00  (--no-fetch-gmail / inbox PDFs)"
+echo "  $AGENTS_DIR/${LABEL_INBOX}.plist   → daily 11:00  (--no-fetch-gmail / cierres .xlsx in inbox)"
 echo
 echo "Project root: $ROOT"
 echo "Logs:         $ROOT/logs/"
@@ -72,5 +72,5 @@ echo
 echo "Notes:"
 echo "  • Mac must be awake (or wake) at 2am / 11am — sleep can skip a run."
 echo "  • Close Excel when possible; locked files are queued to pending/."
-echo "  • Drop all DF/SJM register PDFs for the day into $ROOT/inbox/ before 11am."
+echo "  • Drop AdControl 'Informe avanzado de cierres de caja' .xlsx into $ROOT/inbox/ before 11am."
 echo "  • Success and failure show a Notification Center banner (disable: VENTAS_NOTIFY=0)."

@@ -11,6 +11,7 @@
   "fee_rate_cell": "Setup!$B$6",
   "lock_retries": 5,
   "lock_retry_seconds": 2,
+  "register_pdfs_enabled": false,
   "gmail": {
     "enabled": true,
     "credentials_path": "secrets/credentials.json",
