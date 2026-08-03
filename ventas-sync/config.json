@@ -2,7 +2,11 @@
   "excel_path": "/Users/joseroa/Library/CloudStorage/OneDrive-Personal/LaCata_Company_Folder/LaCata_Contabilidad_v3.xlsx",
   "sheet_name": "Ventas Diarias",
   "ubicacion": "La Cata LMF",
-  "ubicaciones": ["La Cata LMF", "La Cata DF", "La Cata SJM"],
+  "ubicaciones": [
+    "La Cata LMF",
+    "La Cata DF",
+    "La Cata SJM"
+  ],
   "inbox_dir": "inbox",
   "processed_dir": "processed",
   "failed_dir": "failed",
@@ -18,5 +22,6 @@
     "query": "subject:\"RESUMEN DE VENTAS Y COBROS\" has:attachment filename:pdf newer_than:30d",
     "filename_regex": "(?i).*\\.pdf$",
     "max_messages": 50
-  }
+  },
+  "retention_days": 7
 }

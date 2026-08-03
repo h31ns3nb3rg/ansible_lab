@@ -44,34 +44,37 @@ chmod +x scripts/run_job.sh schedule/macos/*.sh
 
 ## Manual runs
 
-Activate the venv first:
+### All stores at once (same as the schedule)
+
+One command processes **LMF (Gmail PDF) + DF/SJM (cierres Excel) + inbox PDFs**:
 
 ```bash
 cd ~/Cata-Ventas-Auto
 source .venv/bin/activate
-```
-
-### 1) LMF — fetch from Gmail and update Excel
-
-```bash
 python run_ventas_sync.py --fetch-gmail
 ```
 
-### 2) DF / SJM — daily cierres Excel (default)
+Or with the same Notification Center banner as the scheduled job:
 
-1. In AdControl, export **Informe avanzado de cierres de caja** (`.xlsx`) for the day/range you need.
-2. Drop the file into `~/Cata-Ventas-Auto/inbox/`.
-3. Run:
+```bash
+cd ~/Cata-Ventas-Auto
+VENTAS_JOB_TAG=manual-all ./scripts/run_job.sh --fetch-gmail
+```
+
+`--fetch-gmail` does this in order:
+
+1. Download matching Gmail PDFs into `inbox/` (LMF)
+2. Process AdControl **cierres** `.xlsx` in `inbox/` (DF / SJM)
+3. Process inbox PDFs
+4. Retention cleanup (`logs/`, `processed/`, `failed/` older than `retention_days`)
+
+**Habit:** drop the AdControl cierres `.xlsx` into `inbox/` before you run (or before 01:00 / 11:00).
+
+### DF / SJM only — import a cierres Excel path
 
 ```bash
 cd ~/Cata-Ventas-Auto
 source .venv/bin/activate
-python run_ventas_sync.py --no-fetch-gmail
-```
-
-Or import a path directly:
-
-```bash
 python run_ventas_sync.py --import-cierres "/full/path/to/Informe_avanzado_de_cierres_de_caja.xlsx" --dry-run
 python run_ventas_sync.py --import-cierres "/full/path/to/Informe_avanzado_de_cierres_de_caja.xlsx"
 ```
@@ -85,25 +88,20 @@ python run_ventas_sync.py --import-cierres "/full/path/to/Informe_avanzado_de_ci
 
 EFECTIVO = `Cantidad de cierre` (same as PDF `Efectivo del Dia`). Location from `Ubicación` column `(SAN JUAN)` / `(DEFILLO)`.
 
-### 3) LMF PDF without Gmail
+### Inbox only (no Gmail fetch)
 
-Drop a `VENTAS Y COBROS` PDF into `inbox/`, then:
+Drop cierres `.xlsx` and/or LMF PDFs into `inbox/`, then:
 
 ```bash
 python run_ventas_sync.py --no-fetch-gmail
+# or with banner:
+VENTAS_JOB_TAG=manual-inbox ./scripts/run_job.sh --no-fetch-gmail
 ```
 
-### 4) Parse one LMF PDF (debug, no Excel write)
+### Parse one LMF PDF (debug, no Excel write)
 
 ```bash
 python run_ventas_sync.py --parse-only "/full/path/to/file.pdf"
-```
-
-### 5) Manual run via the scheduled wrapper (Notification Center banners)
-
-```bash
-VENTAS_JOB_TAG=manual-gmail ./scripts/run_job.sh --fetch-gmail
-VENTAS_JOB_TAG=manual-inbox ./scripts/run_job.sh --no-fetch-gmail
 ```
 
 ### CLI quick reference
@@ -111,7 +109,7 @@ VENTAS_JOB_TAG=manual-inbox ./scripts/run_job.sh --no-fetch-gmail
 | Flag | Purpose |
 |---|---|
 | `--auth-gmail` | One-time OAuth login; saves `secrets/token.json` |
-| `--fetch-gmail` | Download LMF PDFs from Gmail, then process inbox |
+| `--fetch-gmail` | Gmail PDFs + cierres `.xlsx` + inbox PDFs (all stores) |
 | `--no-fetch-gmail` | Process `inbox/` only (cierres `.xlsx` + LMF PDFs) |
 | `--import-cierres FILE` | Import DF/SJM from a cierres `.xlsx` path |
 | `--cleanup` | Delete `logs/` `processed/` `failed/` files older than `retention_days` |
@@ -124,19 +122,28 @@ VENTAS_JOB_TAG=manual-inbox ./scripts/run_job.sh --no-fetch-gmail
 
 ## Automatic schedule (macOS)
 
-| Job | Times (Mac local) | Command |
+One LaunchAgent processes **PDF + Excel (all stores) in the same run**:
+
+| Job | Times (Mac local) | What it does |
 |---|---|---|
-| Gmail / LMF | **01:00** and **11:00** | `--fetch-gmail` |
-| DF / SJM inbox | **01:00** and **11:00** | `--no-fetch-gmail` (reads cierres `.xlsx` in `inbox/`) |
+| `com.lacata.ventas.sync` | **01:00** and **11:00** | `--fetch-gmail` → Gmail LMF PDFs + cierres Excel + inbox PDFs + cleanup |
 
 ```bash
 ./schedule/macos/install_schedule.sh
 ./schedule/macos/uninstall_schedule.sh
 ```
 
+Re-running install also removes older separate agents (`com.lacata.ventas.gmail` / `com.lacata.ventas.inbox`) if present.
+
 **DF/SJM habit:** export AdControl cierres Excel and drop it in `inbox/` **before 01:00 or 11:00**. Include both stores / both shifts in that export.
 
 **Sleep:** if the Mac is fully asleep at a scheduled time, that run may be skipped. Keep it plugged in or allow wake for scheduled tasks.
+
+Manual equivalent of the scheduled job:
+
+```bash
+VENTAS_JOB_TAG=manual-all ./scripts/run_job.sh --fetch-gmail
+```
 
 ### Notifications (macOS)
 
@@ -163,10 +170,9 @@ This is intended for quick reconciliation before/after the Excel write.
 
 | Location | What |
 |---|---|
-| `logs/scheduled_gmail_*.log` | Timed / wrapper Gmail runs |
-| `logs/scheduled_inbox_*.log` | Timed / wrapper inbox runs |
-| `logs/launchd_gmail.*.log` | launchd stdout/stderr (Gmail) |
-| `logs/launchd_inbox.*.log` | launchd stdout/stderr (inbox) |
+| `logs/scheduled_sync_*.log` | Timed combined runs (Gmail + Excel + inbox) |
+| `logs/scheduled_manual-all_*.log` | Manual wrapper runs with `VENTAS_JOB_TAG=manual-all` |
+| `logs/launchd_sync.*.log` | launchd stdout/stderr for the combined agent |
 | `logs/ventas_sync_YYYYMMDD.log` | App log for the day |
 
 ---

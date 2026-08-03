@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>com.lacata.ventas.gmail</string>
+  <string>com.lacata.ventas.sync</string>
 
   <key>ProgramArguments</key>
   <array>
@@ -17,7 +17,7 @@
   <key>EnvironmentVariables</key>
   <dict>
     <key>VENTAS_JOB_TAG</key>
-    <string>gmail</string>
+    <string>sync</string>
     <key>PATH</key>
     <string>/usr/local/bin:/usr/bin:/bin:/opt/homebrew/bin</string>
   </dict>
@@ -42,8 +42,8 @@
   <false/>
 
   <key>StandardOutPath</key>
-  <string>__INSTALL_ROOT__/logs/launchd_gmail.out.log</string>
+  <string>__INSTALL_ROOT__/logs/launchd_sync.out.log</string>
   <key>StandardErrorPath</key>
-  <string>__INSTALL_ROOT__/logs/launchd_gmail.err.log</string>
+  <string>__INSTALL_ROOT__/logs/launchd_sync.err.log</string>
 </dict>
 </plist>
