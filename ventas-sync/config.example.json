@@ -12,6 +12,7 @@
   "lock_retries": 5,
   "lock_retry_seconds": 2,
   "register_pdfs_enabled": false,
+  "retention_days": 7,
   "gmail": {
     "enabled": true,
     "credentials_path": "secrets/credentials.json",

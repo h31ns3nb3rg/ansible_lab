@@ -19,7 +19,12 @@ from ventas_sync.gmail_oauth import (  # noqa: E402
     gmail_paths_from_config,
 )
 from ventas_sync.pdf_parser import parse_totales_generales  # noqa: E402
-from ventas_sync.pipeline import import_cierres_excel, load_config, process_inbox  # noqa: E402
+from ventas_sync.pipeline import (  # noqa: E402
+    import_cierres_excel,
+    load_config,
+    process_inbox,
+    run_retention_cleanup,
+)
 
 
 def main() -> int:
@@ -44,7 +49,12 @@ def main() -> int:
     parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="With --import-cierres: parse and summarize only (no Excel write)",
+        help="With --import-cierres or --cleanup: preview only (no deletes / no Excel write)",
+    )
+    parser.add_argument(
+        "--cleanup",
+        action="store_true",
+        help="Delete logs/processed/failed files older than retention_days (default 7)",
     )
     parser.add_argument(
         "--excel",
@@ -67,6 +77,19 @@ def main() -> int:
         help="Skip Gmail even if gmail.enabled=true in config",
     )
     args = parser.parse_args()
+
+    if args.cleanup:
+        config = load_config(args.config)
+        base_dir = Path(args.config).resolve().parent
+        result = run_retention_cleanup(config, base_dir, dry_run=args.dry_run)
+        print(json.dumps(result, indent=2, default=str))
+        print("\n=== Cleanup resume ===")
+        print(f"Retention days: {result.get('retention_days')}")
+        print(f"Deleted: {result.get('deleted_count')}")
+        if args.dry_run:
+            print("Dry run — files not deleted")
+        print("======================\n")
+        return 1 if result.get("errors") else 0
 
     if args.import_cierres:
         result = import_cierres_excel(
@@ -149,6 +172,7 @@ def main() -> int:
     failed = [r for r in results if r.get("action") == "failed"]
     queued = [r for r in results if r.get("action") == "queued"]
     sanity_reports = [r for r in results if r.get("action") == "sanity_report"]
+    cleanup = next((r for r in results if r.get("action") in {"cleanup", "cleanup_dry_run"}), None)
 
     print("\n=== Run resume ===")
     if gmail_summary:
@@ -178,6 +202,11 @@ def main() -> int:
                 f"ef={entry.get('efectivo')} tj={entry.get('tarjeta_bruta')} "
                 f"xf={entry.get('transferencias')} py={entry.get('pedidos_ya')}"
             )
+    if cleanup:
+        print(
+            f"Cleanup: deleted {cleanup.get('deleted_count', 0)} file(s) "
+            f"older than {cleanup.get('retention_days')} day(s)"
+        )
     print("==================\n")
 
     print(json.dumps(results, indent=2, default=str))

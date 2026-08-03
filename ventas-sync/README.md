@@ -114,7 +114,8 @@ VENTAS_JOB_TAG=manual-inbox ./scripts/run_job.sh --no-fetch-gmail
 | `--fetch-gmail` | Download LMF PDFs from Gmail, then process inbox |
 | `--no-fetch-gmail` | Process `inbox/` only (cierres `.xlsx` + LMF PDFs) |
 | `--import-cierres FILE` | Import DF/SJM from a cierres `.xlsx` path |
-| `--dry-run` | With `--import-cierres`: parse/summarize only |
+| `--cleanup` | Delete `logs/` `processed/` `failed/` files older than `retention_days` |
+| `--dry-run` | With `--import-cierres` or `--cleanup`: preview only |
 | `--excel FILE` | Override workbook path (testing a copy) |
 | `--parse-only PDF` | Print parsed LMF totals as JSON |
 | `--config PATH` | Alternate config (default: `config.json`) |
@@ -203,11 +204,21 @@ Filled **DEPOSITO EFECTIVO** is never overwritten.
 | Folder | Role |
 |---|---|
 | `inbox/` | Drop cierres `.xlsx` (DF/SJM) and optional LMF PDFs |
-| `processed/` | Successfully handled files |
-| `failed/` | Files that failed to parse/write |
+| `processed/` | Successfully handled files (auto-deleted after **7 days**) |
+| `failed/` | Files that failed to parse/write (auto-deleted after **7 days**) |
 | `pending/` | Queued Excel updates when the file was locked |
-| `logs/` | Run logs |
+| `logs/` | Run logs (auto-deleted after **7 days**) |
 | `secrets/` | `credentials.json` + `token.json` (do not commit) |
+
+### Retention / cleanup
+Keeps at most **7 days** of `logs/`, `processed/`, and `failed/` (configurable via `retention_days` in `config.json`). Inbox is never auto-deleted.
+
+Cleanup runs automatically at the end of every sync. Manual:
+
+```bash
+python run_ventas_sync.py --cleanup --dry-run   # preview
+python run_ventas_sync.py --cleanup             # delete now
+```
 
 ---
 

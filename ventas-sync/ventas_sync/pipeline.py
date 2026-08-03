@@ -16,6 +16,7 @@ from .cierres_parser import (
     parse_cierres_workbook,
     summarize_cierres,
 )
+from .cleanup import cleanup_old_files
 from .excel_updater import (
     DailySaleRow,
     flush_pending,
@@ -59,6 +60,29 @@ def _archive(pdf: Path, folder: Path) -> Path:
     dest = folder / f"{pdf.stem}_{stamp}{pdf.suffix}"
     shutil.move(str(pdf), str(dest))
     return dest
+
+
+def _retention_dirs(config: dict[str, Any], base_dir: Path) -> list[Path]:
+    """Folders cleaned by retention (not inbox — that is active work)."""
+    return [
+        _resolve(base_dir, config.get("logs_dir", "logs")),
+        _resolve(base_dir, config.get("processed_dir", "processed")),
+        _resolve(base_dir, config.get("failed_dir", "failed")),
+    ]
+
+
+def run_retention_cleanup(
+    config: dict[str, Any],
+    base_dir: Path,
+    *,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    days = int(config.get("retention_days", 7))
+    return cleanup_old_files(
+        _retention_dirs(config, base_dir),
+        retention_days=days,
+        dry_run=dry_run,
+    )
 
 
 def _build_sanity_report(rows: list[DailySaleRow]) -> list[dict[str, Any]]:
@@ -288,10 +312,20 @@ def process_inbox(
     if not pdfs and not cierres_jobs:
         logging.info("No cierres Excel or PDFs in inbox: %s", inbox)
         results.append({"action": "sanity_report", "source": "inbox", "rows": []})
+        try:
+            results.append(run_retention_cleanup(config, base_dir))
+        except Exception as exc:  # noqa: BLE001
+            logging.exception("Retention cleanup failed: %s", exc)
+            results.append({"action": "cleanup_failed", "error": str(exc)})
         return results
     if not pdfs:
         if not any(item.get("action") == "sanity_report" for item in results):
             results.append({"action": "sanity_report", "source": "inbox", "rows": []})
+        try:
+            results.append(run_retention_cleanup(config, base_dir))
+        except Exception as exc:  # noqa: BLE001
+            logging.exception("Retention cleanup failed: %s", exc)
+            results.append({"action": "cleanup_failed", "error": str(exc)})
         return results
 
     lmf_jobs: list[tuple[date, Path, DailySaleRow]] = []
@@ -432,6 +466,13 @@ def process_inbox(
                     "error": str(exc),
                 }
             )
+
+    try:
+        cleanup_result = run_retention_cleanup(config, base_dir)
+        results.append(cleanup_result)
+    except Exception as exc:  # noqa: BLE001
+        logging.exception("Retention cleanup failed: %s", exc)
+        results.append({"action": "cleanup_failed", "error": str(exc)})
 
     return results
 
