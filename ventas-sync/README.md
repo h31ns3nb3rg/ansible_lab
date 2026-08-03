@@ -79,14 +79,14 @@ python run_ventas_sync.py --import-cierres "/full/path/to/Informe_avanzado_de_ci
 python run_ventas_sync.py --import-cierres "/full/path/to/Informe_avanzado_de_cierres_de_caja.xlsx"
 ```
 
-**Jul 27 example from your export (both shifts summed):**
+**Aug 2 example from your export (Pago en efectivo; fondo excluded):**
 
-| Store | EFECTIVO | TARJETA | PEDIDOS YA |
-|---|---|---|---|
-| La Cata SJM | **48225.00** | 10210.00 | 0 |
-| La Cata DF | **9915.00** | 3005.00 | 1580.00 |
+| Store | Shifts | Fondo/shift | EFECTIVO | TARJETA | PEDIDOS YA |
+|---|---|---|---|---|---|
+| La Cata SJM | 2 | 5,000 | **43770.00** | 5750.00 | 0 |
+| La Cata DF | 2 | 2,500 | **17140.00** | 20880.00 | 3380.00 |
 
-EFECTIVO = `Cantidad de cierre` (same as PDF `Efectivo del Dia`). Location from `Ubicación` column `(SAN JUAN)` / `(DEFILLO)`.
+EFECTIVO = `Pago en efectivo` (= `Cantidad de cierre` − `Fondo de Caja`). Location from `Ubicación` column `(SAN JUAN)` / `(DEFILLO)`.
 
 ### Inbox only (no Gmail fetch)
 
@@ -185,10 +185,12 @@ This is intended for quick reconciliation before/after the Excel write.
 |---|---|
 | FECHA | Date from `Hora de apertura` |
 | UBICACION | `(SAN JUAN)` → `La Cata SJM`, `(DEFILLO)` → `La Cata DF` |
-| EFECTIVO | `Cantidad de cierre` |
+| EFECTIVO | `Pago en efectivo` (sales cash; excludes `Fondo de Caja`) |
 | TARJETA (BRUTA) | `Total en pago con tarjeta` |
 | TRANSFERENCIAS | `Transeferencia bancaria` + `Total en otros pagos` |
 | PEDIDOS YA | `Total en PedidosYA` |
+
+`Fondo de Caja` is the POS float (typically **5,000** SJM / **2,500** DF per shift). It is **not** written to Ventas Diarias. `Cantidad de cierre` includes that float; we use `Pago en efectivo` instead so EFECTIVO is sales-only. If `Pago en efectivo` is missing on an older export, the importer falls back to `Cantidad de cierre − Fondo de Caja` (or the default floats above).
 
 Same-day shifts per store are summed. LMF rows are left alone.
 

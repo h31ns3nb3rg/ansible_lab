@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from collections import defaultdict
@@ -24,6 +25,9 @@ _HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "ubicacion": ("ubicacion", "ubicacion comercial"),
     "estado": ("estado",),
     "cantidad_cierre": ("cantidad de cierre",),
+    "fondo_caja": ("fondo de caja",),
+    # Sales cash for Ventas Diarias EFECTIVO (excludes fondo de caja float)
+    "pago_efectivo": ("pago en efectivo", "pago en efectivos"),
     "hora_apertura": ("hora de apertura",),
     "tarjeta": ("total en pago con tarjeta", "pago con tarjeta"),
     "transferencia": (
@@ -32,6 +36,12 @@ _HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     ),
     "pedidos_ya": ("total en pedidosya", "pedidosya", "pedidos ya"),
     "otros_pagos": ("total en otros pagos", "otros pagos"),
+}
+
+# Expected float per store when export omits Fondo de Caja (fallback only).
+_DEFAULT_FONDO_BY_UBICACION: dict[str, float] = {
+    "La Cata SJM": 5000.0,
+    "La Cata DF": 2500.0,
 }
 
 
@@ -125,13 +135,15 @@ def _resolve_headers(headers: list[Any]) -> dict[str, int]:
                 break
     required = (
         "ubicacion",
-        "cantidad_cierre",
         "hora_apertura",
         "tarjeta",
         "transferencia",
         "otros_pagos",
     )
     missing = [k for k in required if k not in resolved]
+    # Need either Pago en efectivo, or Cantidad de cierre (+ optional Fondo) to derive it.
+    if "pago_efectivo" not in resolved and "cantidad_cierre" not in resolved:
+        missing.append("pago_efectivo|cantidad_cierre")
     if missing:
         raise ValueError(
             "Cierres Excel missing required columns: "
@@ -149,8 +161,51 @@ class CierreShift:
     tarjeta: float
     transferencias: float
     pedidos_ya: float
+    fondo_caja: float = 0.0
+    cantidad_cierre: float | None = None
     usuario: str | None = None
     estado: str | None = None
+
+
+def _efectivo_from_row(
+    row: tuple[Any, ...],
+    cols: dict[str, int],
+    ubicacion: str,
+) -> tuple[float, float, float | None]:
+    """Return (pago_en_efectivo, fondo_caja, cantidad_cierre).
+
+    Ventas Diarias EFECTIVO uses AdControl **Pago en efectivo** (sales cash).
+    That equals Cantidad de cierre − Fondo de Caja (float is not sales).
+    """
+    cantidad: float | None = None
+    if "cantidad_cierre" in cols:
+        cantidad = _parse_money(row[cols["cantidad_cierre"]])
+
+    if "fondo_caja" in cols:
+        fondo = _parse_money(row[cols["fondo_caja"]])
+    else:
+        fondo = _DEFAULT_FONDO_BY_UBICACION.get(ubicacion, 0.0)
+
+    if "pago_efectivo" in cols:
+        efectivo = _parse_money(row[cols["pago_efectivo"]])
+    elif cantidad is not None:
+        efectivo = max(0.0, cantidad - fondo)
+    else:
+        raise ValueError("Cierres row missing Pago en efectivo and Cantidad de cierre")
+
+    if cantidad is not None and "pago_efectivo" in cols:
+        expected = max(0.0, round(cantidad - fondo, 2))
+        if abs(expected - round(efectivo, 2)) > 0.01:
+            logging.warning(
+                "Cierres mismatch %s: cantidad_cierre=%s fondo=%s "
+                "pago_efectivo=%s (expected cantidad-fondo=%s)",
+                ubicacion,
+                cantidad,
+                fondo,
+                efectivo,
+                expected,
+            )
+    return efectivo, fondo, cantidad
 
 
 def parse_cierres_workbook(path: str | Path) -> list[CierreShift]:
@@ -189,15 +244,19 @@ def parse_cierres_workbook(path: str | Path) -> list[CierreShift]:
                     if raw_user is not None:
                         usuario = str(raw_user).strip() or None
                     break
+            ubicacion = _map_ubicacion(ubic_raw)
+            efectivo, fondo, cantidad = _efectivo_from_row(row, cols, ubicacion)
             shifts.append(
                 CierreShift(
                     fecha=fecha,
-                    ubicacion=_map_ubicacion(ubic_raw),
-                    # Matches register PDF "Efectivo del Dia" / Cantidad de cierre
-                    efectivo=_parse_money(row[cols["cantidad_cierre"]]),
+                    ubicacion=ubicacion,
+                    # Ventas Diarias EFECTIVO = Pago en efectivo (not Cantidad de cierre)
+                    efectivo=efectivo,
                     tarjeta=_parse_money(row[cols["tarjeta"]]),
                     transferencias=transferencia + otros,
                     pedidos_ya=pedidos,
+                    fondo_caja=fondo,
+                    cantidad_cierre=cantidad,
                     usuario=usuario,
                     estado=str(estado).strip() if estado is not None else None,
                 )
