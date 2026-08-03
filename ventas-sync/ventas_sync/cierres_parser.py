@@ -314,9 +314,14 @@ def is_cierres_workbook(path: str | Path) -> bool:
     path = Path(path)
     if path.suffix.lower() not in {".xlsx", ".xlsm"}:
         return False
-    # Fast path: common export filename
+    # Ignore Excel lock / temp files
+    if path.name.startswith("~$") or path.name.startswith("."):
+        return False
+    # Fast path: common export filename (spaces, -2 copies, etc. are fine)
     name = path.name.lower()
-    if "cierres" in name and "caja" in name:
+    if ("cierres" in name and "caja" in name) or (
+        "informe" in name and "cierres" in name
+    ):
         return True
     try:
         wb = load_workbook(path, data_only=True, read_only=True)
@@ -329,5 +334,41 @@ def is_cierres_workbook(path: str | Path) -> bool:
             return True
         finally:
             wb.close()
-    except Exception:
+    except Exception as exc:  # noqa: BLE001
+        logging.debug("Not a cierres workbook %s: %s", path.name, exc)
         return False
+
+
+def resolve_cierres_path(path: str | Path, base_dir: str | Path | None = None) -> Path:
+    """Resolve a cierres Excel path; try inbox/ when given a bare filename."""
+    raw = Path(path).expanduser()
+    candidates: list[Path] = []
+    if raw.is_absolute():
+        candidates.append(raw)
+    else:
+        candidates.append(Path.cwd() / raw)
+        if base_dir is not None:
+            base = Path(base_dir)
+            candidates.append(base / raw)
+            candidates.append(base / "inbox" / raw.name)
+            # Also allow just the filename while cwd is elsewhere
+            candidates.append(base / "inbox" / Path(path).name)
+
+    seen: set[Path] = set()
+    for cand in candidates:
+        try:
+            resolved = cand.resolve()
+        except OSError:
+            continue
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.is_file():
+            return resolved
+
+    searched = ", ".join(str(c) for c in candidates)
+    raise FileNotFoundError(
+        f"Cierres Excel not found: {path!r}. Looked in: {searched}. "
+        "Put the file in inbox/ or pass a full path in quotes "
+        '(spaces in the name require quotes).'
+    )

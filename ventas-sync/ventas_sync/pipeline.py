@@ -14,6 +14,7 @@ from .cierres_parser import (
     aggregate_cierres,
     is_cierres_workbook,
     parse_cierres_workbook,
+    resolve_cierres_path,
     summarize_cierres,
 )
 from .cleanup import cleanup_old_files
@@ -235,10 +236,22 @@ def process_inbox(
             *inbox.glob("*.XLSM"),
         }
     )
+    # Skip Excel lock files (~$...)
+    cierres_files = [p for p in cierres_files if not p.name.startswith("~$")]
+    logging.info(
+        "Inbox Excel files (%s): %s",
+        inbox,
+        [p.name for p in cierres_files] or "(none)",
+    )
     cierres_jobs = [p for p in cierres_files if is_cierres_workbook(p)]
     for other in cierres_files:
         if other not in cierres_jobs:
             logging.warning("Skipping non-cierres Excel in inbox: %s", other.name)
+    if cierres_files and not cierres_jobs:
+        logging.warning(
+            "Found .xlsx in inbox but none matched cierres headers/name. "
+            "Expected a name like 'Informe avanzado de cierres de caja ….xlsx'"
+        )
 
     for xlsx in cierres_jobs:
         logging.info("Processing cierres Excel %s (DF/SJM)", xlsx.name)
@@ -490,7 +503,7 @@ def import_cierres_excel(
     config = load_config(config_file)
     setup_logging(_resolve(base_dir, config.get("logs_dir", "logs")))
 
-    source = Path(cierres_path).expanduser().resolve()
+    source = resolve_cierres_path(cierres_path, base_dir)
     if not source.exists():
         raise FileNotFoundError(f"Cierres Excel not found: {source}")
 

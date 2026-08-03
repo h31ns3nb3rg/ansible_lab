@@ -72,11 +72,26 @@ VENTAS_JOB_TAG=manual-all ./scripts/run_job.sh --fetch-gmail
 
 ### DF / SJM only — import a cierres Excel path
 
+**Quote the path** — AdControl filenames have spaces:
+
 ```bash
 cd ~/Cata-Ventas-Auto
 source .venv/bin/activate
-python run_ventas_sync.py --import-cierres "/full/path/to/Informe_avanzado_de_cierres_de_caja.xlsx" --dry-run
-python run_ventas_sync.py --import-cierres "/full/path/to/Informe_avanzado_de_cierres_de_caja.xlsx"
+
+# Option A: file already in inbox/ (processes all cierres .xlsx there)
+python run_ventas_sync.py --no-fetch-gmail
+
+# Option B: import by name or full path (quotes required)
+python run_ventas_sync.py --import-cierres "inbox/Informe avanzado de cierres de caja 3_8_2026-2.xlsx"
+python run_ventas_sync.py --import-cierres "Informe avanzado de cierres de caja 3_8_2026-2.xlsx"
+```
+
+Bare filenames are also looked up under `inbox/`.
+
+Dry-run first if you want:
+
+```bash
+python run_ventas_sync.py --import-cierres "inbox/Informe avanzado de cierres de caja 3_8_2026-2.xlsx" --dry-run
 ```
 
 **Aug 2 example from your export (Pago en efectivo; fondo excluded):**
