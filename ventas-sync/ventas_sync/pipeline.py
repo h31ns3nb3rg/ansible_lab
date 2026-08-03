@@ -256,7 +256,9 @@ def process_inbox(
     for xlsx in cierres_jobs:
         logging.info("Processing cierres Excel %s (DF/SJM)", xlsx.name)
         try:
-            shifts = parse_cierres_workbook(xlsx)
+            parsed = parse_cierres_workbook(xlsx, return_stats=True)
+            assert isinstance(parsed, tuple)
+            shifts, parse_stats = parsed
             rows = aggregate_cierres(shifts)
             summary = summarize_cierres(rows)
             logging.info(
@@ -268,6 +270,24 @@ def process_inbox(
                 summary["date_to"],
                 summary["by_ubicacion"],
             )
+            logging.info(
+                "Cierres %s parse_stats: sheets=%s raw_ubic=%s skipped_open=%s unknown=%s",
+                xlsx.name,
+                parse_stats.sheets_read,
+                parse_stats.raw_ubicaciones,
+                parse_stats.skipped_open,
+                parse_stats.skipped_unknown_ubicacion,
+            )
+            if "La Cata SJM" not in summary["by_ubicacion"]:
+                logging.warning(
+                    "%s: no SJM rows — file may be DF-only or missing SAN JUAN",
+                    xlsx.name,
+                )
+            if "La Cata DF" not in summary["by_ubicacion"]:
+                logging.warning(
+                    "%s: no DF rows — file may be SJM-only or missing DEFILLO",
+                    xlsx.name,
+                )
             sanity_entries = _build_sanity_report(rows)
             _log_sanity_report(f"cierres:{xlsx.name}", sanity_entries)
             results.append(
@@ -275,6 +295,10 @@ def process_inbox(
                     "action": "sanity_report",
                     "source": str(xlsx),
                     "rows": sanity_entries,
+                    "parse_stats": parse_stats.as_dict(),
+                    "by_ubicacion": summary["by_ubicacion"],
+                    "date_from": summary["date_from"],
+                    "date_to": summary["date_to"],
                 }
             )
             for row in rows:
@@ -519,7 +543,9 @@ def import_cierres_excel(
     ]
 
     logging.info("Parsing cierres export: %s", source)
-    shifts = parse_cierres_workbook(source)
+    parsed = parse_cierres_workbook(source, return_stats=True)
+    assert isinstance(parsed, tuple)
+    shifts, parse_stats = parsed
     rows = aggregate_cierres(shifts)
     summary = summarize_cierres(rows)
     logging.info(
@@ -530,6 +556,21 @@ def import_cierres_excel(
         summary["date_to"],
     )
     logging.info("By ubicación: %s", summary["by_ubicacion"])
+    warnings: list[str] = []
+    if "La Cata SJM" not in summary["by_ubicacion"]:
+        warnings.append(
+            "No La Cata SJM rows found — export may be filtered to DEFILLO only, "
+            "or SJM is on another sheet/file."
+        )
+    if "La Cata DF" not in summary["by_ubicacion"]:
+        warnings.append(
+            "No La Cata DF rows found — export may be filtered to SAN JUAN only, "
+            "or DF is on another sheet/file."
+        )
+    if parse_stats.raw_ubicaciones:
+        logging.info("Raw Ubicación values in file: %s", parse_stats.raw_ubicaciones)
+    for w in warnings:
+        logging.warning(w)
     sanity_entries = _build_sanity_report(rows)
     _log_sanity_report(f"import:{source.name}", sanity_entries)
 
@@ -539,6 +580,8 @@ def import_cierres_excel(
         "excel_path": str(excel_path),
         "shifts": len(shifts),
         **summary,
+        "parse_stats": parse_stats.as_dict(),
+        "warnings": warnings,
         "preview": [
             {
                 "fecha": r.fecha.isoformat(),

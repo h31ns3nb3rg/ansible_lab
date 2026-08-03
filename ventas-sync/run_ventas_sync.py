@@ -109,6 +109,17 @@ def main() -> int:
         print(f"Shifts: {result.get('shifts')}")
         print(f"Day/location rows: {result.get('days_locations')} ({result.get('by_ubicacion')})")
         print(f"Range: {result.get('date_from')} → {result.get('date_to')}")
+        stats = result.get("parse_stats") or {}
+        if stats.get("sheets_read") is not None:
+            print(f"Sheets read: {stats.get('sheets_read')}")
+        if stats.get("raw_ubicaciones"):
+            print(f"Raw ubicaciones in file: {stats.get('raw_ubicaciones')}")
+        if stats.get("skipped_open"):
+            print(f"Skipped open registers: {stats.get('skipped_open')}")
+        if stats.get("skipped_unknown_ubicacion"):
+            print(f"Skipped unknown ubicación: {stats.get('skipped_unknown_ubicacion')}")
+        for warn in result.get("warnings") or []:
+            print(f"WARNING: {warn}")
         if args.dry_run:
             print("Dry run — Excel not modified")
         else:

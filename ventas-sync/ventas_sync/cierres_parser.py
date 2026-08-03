@@ -6,7 +6,7 @@ import logging
 import re
 import unicodedata
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -14,11 +14,6 @@ from typing import Any
 from openpyxl import load_workbook
 
 from .excel_updater import DailySaleRow
-
-_LOCATION_MARKERS = (
-    ("SAN JUAN", "La Cata SJM"),
-    ("DEFILLO", "La Cata DF"),
-)
 
 # Flexible header aliases (export typos / renames).
 _HEADER_ALIASES: dict[str, tuple[str, ...]] = {
@@ -43,6 +38,8 @@ _DEFAULT_FONDO_BY_UBICACION: dict[str, float] = {
     "La Cata SJM": 5000.0,
     "La Cata DF": 2500.0,
 }
+
+_CLOSED_ESTADOS = {"", "close", "cerrado", "closed", "cierre"}
 
 
 def _strip_accents(text: str) -> str:
@@ -100,6 +97,9 @@ def _parse_datetime(value: Any) -> datetime:
         "%d/%m/%Y %H:%M",
         "%Y-%m-%d",
         "%d/%m/%Y",
+        "%m/%d/%Y %H:%M:%S",
+        "%m/%d/%Y %H:%M",
+        "%m/%d/%Y",
     ):
         try:
             return datetime.strptime(text, fmt)
@@ -110,12 +110,23 @@ def _parse_datetime(value: Any) -> datetime:
 
 def _map_ubicacion(raw: Any) -> str:
     compact = _strip_accents(str(raw or "")).upper()
-    has_sjm = bool(re.search(r"\(\s*SAN\s+JUAN\s*\)", compact)) or (
-        "SAN JUAN" in compact and "DEFILLO" not in compact
+    compact_nospace = re.sub(r"\s+", "", compact)
+
+    has_sjm = bool(
+        re.search(r"\(\s*SAN\s*JUAN\s*\)", compact)
+        or re.search(r"\bSAN\s*JUAN\b", compact)
+        or re.search(r"\bSJM\b", compact)
+        or "SANJUAN" in compact_nospace
     )
-    has_df = bool(re.search(r"\(\s*DEFILLO\s*\)", compact)) or (
-        "DEFILLO" in compact and "SAN JUAN" not in compact
+    has_df = bool(
+        re.search(r"\(\s*DEFILLO\s*\)", compact)
+        or re.search(r"\bDEFILLO\b", compact)
+        or re.search(r"\bDF\b", compact)
+        or "DEFILLO" in compact_nospace
     )
+    # Avoid matching "DF" inside unrelated words when both markers absent —
+    # require DEFILLO or explicit (DEFILLO) / standalone DF token (already above).
+
     if has_sjm and has_df:
         raise ValueError(f"Ambiguous ubicación in cierres export: {raw!r}")
     if has_sjm:
@@ -165,6 +176,29 @@ class CierreShift:
     cantidad_cierre: float | None = None
     usuario: str | None = None
     estado: str | None = None
+    sheet: str | None = None
+
+
+@dataclass
+class CierresParseStats:
+    sheets_read: list[str] = field(default_factory=list)
+    sheets_skipped: list[str] = field(default_factory=list)
+    raw_ubicaciones: dict[str, int] = field(default_factory=dict)
+    skipped_open: int = 0
+    skipped_unknown_ubicacion: dict[str, int] = field(default_factory=dict)
+    skipped_errors: int = 0
+    rows_seen: int = 0
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "sheets_read": list(self.sheets_read),
+            "sheets_skipped": list(self.sheets_skipped),
+            "raw_ubicaciones": dict(self.raw_ubicaciones),
+            "skipped_open": self.skipped_open,
+            "skipped_unknown_ubicacion": dict(self.skipped_unknown_ubicacion),
+            "skipped_errors": self.skipped_errors,
+            "rows_seen": self.rows_seen,
+        }
 
 
 def _efectivo_from_row(
@@ -208,28 +242,53 @@ def _efectivo_from_row(
     return efectivo, fondo, cantidad
 
 
-def parse_cierres_workbook(path: str | Path) -> list[CierreShift]:
-    """Parse each closed cash-register shift from the advanced cierres Excel."""
-    wb = load_workbook(Path(path), data_only=True, read_only=True)
+def _parse_sheet(
+    ws: Any,
+    *,
+    sheet_name: str,
+    stats: CierresParseStats,
+) -> list[CierreShift]:
+    rows = ws.iter_rows(values_only=True)
     try:
-        ws = wb.active
-        rows = ws.iter_rows(values_only=True)
-        try:
-            header_row = next(rows)
-        except StopIteration as exc:
-            raise ValueError("Cierres Excel is empty") from exc
+        header_row = next(rows)
+    except StopIteration:
+        stats.sheets_skipped.append(f"{sheet_name}:empty")
+        return []
+
+    try:
         cols = _resolve_headers(list(header_row))
-        shifts: list[CierreShift] = []
-        for row in rows:
-            if row is None or all(v is None or str(v).strip() == "" for v in row):
-                continue
-            ubic_raw = row[cols["ubicacion"]]
-            if ubic_raw is None or str(ubic_raw).strip() == "":
-                continue
-            estado = row[cols["estado"]] if "estado" in cols else None
-            if estado is not None and str(estado).strip().lower() not in {"", "close", "cerrado"}:
-                # Skip open / incomplete registers
-                continue
+    except ValueError as exc:
+        stats.sheets_skipped.append(f"{sheet_name}:{exc}")
+        logging.info("Skipping sheet %r (not cierres layout): %s", sheet_name, exc)
+        return []
+
+    shifts: list[CierreShift] = []
+    for row in rows:
+        if row is None or all(v is None or str(v).strip() == "" for v in row):
+            continue
+        stats.rows_seen += 1
+        ubic_raw = row[cols["ubicacion"]]
+        if ubic_raw is None or str(ubic_raw).strip() == "":
+            continue
+        raw_label = str(ubic_raw).strip()
+        stats.raw_ubicaciones[raw_label] = stats.raw_ubicaciones.get(raw_label, 0) + 1
+
+        estado = row[cols["estado"]] if "estado" in cols else None
+        estado_norm = str(estado).strip().lower() if estado is not None else ""
+        if estado is not None and estado_norm not in _CLOSED_ESTADOS:
+            stats.skipped_open += 1
+            continue
+
+        try:
+            ubicacion = _map_ubicacion(ubic_raw)
+        except ValueError:
+            stats.skipped_unknown_ubicacion[raw_label] = (
+                stats.skipped_unknown_ubicacion.get(raw_label, 0) + 1
+            )
+            logging.warning("Skipping unknown ubicación in %s: %r", sheet_name, raw_label)
+            continue
+
+        try:
             fecha = _parse_datetime(row[cols["hora_apertura"]]).date()
             transferencia = _parse_money(row[cols["transferencia"]])
             otros = _parse_money(row[cols["otros_pagos"]])
@@ -237,20 +296,17 @@ def parse_cierres_workbook(path: str | Path) -> list[CierreShift]:
                 _parse_money(row[cols["pedidos_ya"]]) if "pedidos_ya" in cols else 0.0
             )
             usuario = None
-            # Usuario is usually column 1; resolve if present among headers
             for idx, h in enumerate(header_row):
                 if _norm_header(h) == "usuario":
                     raw_user = row[idx]
                     if raw_user is not None:
                         usuario = str(raw_user).strip() or None
                     break
-            ubicacion = _map_ubicacion(ubic_raw)
             efectivo, fondo, cantidad = _efectivo_from_row(row, cols, ubicacion)
             shifts.append(
                 CierreShift(
                     fecha=fecha,
                     ubicacion=ubicacion,
-                    # Ventas Diarias EFECTIVO = Pago en efectivo (not Cantidad de cierre)
                     efectivo=efectivo,
                     tarjeta=_parse_money(row[cols["tarjeta"]]),
                     transferencias=transferencia + otros,
@@ -259,8 +315,57 @@ def parse_cierres_workbook(path: str | Path) -> list[CierreShift]:
                     cantidad_cierre=cantidad,
                     usuario=usuario,
                     estado=str(estado).strip() if estado is not None else None,
+                    sheet=sheet_name,
                 )
             )
+        except Exception as exc:  # noqa: BLE001
+            stats.skipped_errors += 1
+            logging.warning("Skipping bad cierres row in %s: %s", sheet_name, exc)
+
+    stats.sheets_read.append(sheet_name)
+    logging.info(
+        "Sheet %r: %s closed shifts parsed",
+        sheet_name,
+        len(shifts),
+    )
+    return shifts
+
+
+def parse_cierres_workbook(
+    path: str | Path,
+    *,
+    return_stats: bool = False,
+) -> list[CierreShift] | tuple[list[CierreShift], CierresParseStats]:
+    """Parse closed cash-register shifts from all sheets in the cierres Excel."""
+    path = Path(path)
+    wb = load_workbook(path, data_only=True, read_only=True)
+    stats = CierresParseStats()
+    try:
+        shifts: list[CierreShift] = []
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            shifts.extend(_parse_sheet(ws, sheet_name=sheet_name, stats=stats))
+        if not shifts:
+            raise ValueError(
+                "No closed cierres rows found in workbook. "
+                f"sheets_read={stats.sheets_read} sheets_skipped={stats.sheets_skipped} "
+                f"raw_ubicaciones={stats.raw_ubicaciones} "
+                f"skipped_open={stats.skipped_open} "
+                f"skipped_unknown={stats.skipped_unknown_ubicacion}"
+            )
+        logging.info(
+            "Cierres parse %s: %s shifts from sheets %s | raw ubicaciones=%s | "
+            "skipped_open=%s unknown=%s errors=%s",
+            path.name,
+            len(shifts),
+            stats.sheets_read,
+            stats.raw_ubicaciones,
+            stats.skipped_open,
+            stats.skipped_unknown_ubicacion,
+            stats.skipped_errors,
+        )
+        if return_stats:
+            return shifts, stats
         return shifts
     finally:
         wb.close()
@@ -326,12 +431,17 @@ def is_cierres_workbook(path: str | Path) -> bool:
     try:
         wb = load_workbook(path, data_only=True, read_only=True)
         try:
-            ws = wb.active
-            header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
-            if not header_row:
-                return False
-            _resolve_headers(list(header_row))
-            return True
+            for sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                header_row = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), None)
+                if not header_row:
+                    continue
+                try:
+                    _resolve_headers(list(header_row))
+                    return True
+                except ValueError:
+                    continue
+            return False
         finally:
             wb.close()
     except Exception as exc:  # noqa: BLE001
@@ -370,5 +480,5 @@ def resolve_cierres_path(path: str | Path, base_dir: str | Path | None = None) -
     raise FileNotFoundError(
         f"Cierres Excel not found: {path!r}. Looked in: {searched}. "
         "Put the file in inbox/ or pass a full path in quotes "
-        '(spaces in the name require quotes).'
+        "(spaces in the name require quotes)."
     )
