@@ -90,6 +90,8 @@ python run_ventas_sync.py --import-cierres "Informe avanzado de cierres de caja 
 
 Bare filenames are also looked up under `inbox/`.
 
+Use **`Informe avanzado de cierres de caja`**, not `Registrar informe` — that is a different AdControl report and does not have the columns we need (`Pago en efectivo`, `Fondo de Caja`, etc.).
+
 Dry-run first if you want:
 
 ```bash

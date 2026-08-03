@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import logging
 import re
 import unicodedata
+import zipfile
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -14,6 +16,73 @@ from typing import Any
 from openpyxl import load_workbook
 
 from .excel_updater import DailySaleRow
+
+# Minimal OOXML stylesheet — used when AdControl/LibreOffice exports ship broken fills
+# that make openpyxl raise: TypeError: Fill() takes no arguments / expected Fill.
+_MINIMAL_STYLES_XML = b"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <fonts count="1"><font><sz val="11"/><color theme="1"/><name val="Calibri"/><family val="2"/></font></fonts>
+  <fills count="2">
+    <fill><patternFill patternType="none"/></fill>
+    <fill><patternFill patternType="gray125"/></fill>
+  </fills>
+  <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+  <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+  <cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>
+  <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+</styleSheet>
+"""
+
+
+def _is_stylesheet_error(exc: BaseException) -> bool:
+    text = str(exc)
+    return (
+        "Fill" in text
+        or "fill" in text.lower()
+        or "Style" in type(exc).__name__
+        or "stylesheet" in text.lower()
+    )
+
+
+def _workbook_bytes_without_styles(path: Path) -> io.BytesIO:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(path, "r") as zin, zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zout:
+        for info in zin.infolist():
+            data = zin.read(info.filename)
+            name = info.filename.replace("\\", "/")
+            if name == "xl/styles.xml" or name.endswith("/styles.xml"):
+                data = _MINIMAL_STYLES_XML
+            zout.writestr(info, data)
+    buf.seek(0)
+    return buf
+
+
+def load_cierres_workbook(path: str | Path, **kwargs: Any):
+    """load_workbook that survives broken styles in some AdControl .xlsx exports."""
+    path = Path(path)
+    kwargs.setdefault("data_only", True)
+    kwargs.setdefault("read_only", True)
+    try:
+        return load_workbook(path, **kwargs)
+    except TypeError as exc:
+        if not _is_stylesheet_error(exc):
+            raise
+        logging.warning(
+            "Workbook %s has invalid Excel styles (%s); reloading without styles",
+            path.name,
+            exc,
+        )
+        return load_workbook(_workbook_bytes_without_styles(path), **kwargs)
+    except ValueError as exc:
+        # Newer openpyxl wraps stylesheet failures
+        if not _is_stylesheet_error(exc):
+            raise
+        logging.warning(
+            "Workbook %s has invalid Excel styles (%s); reloading without styles",
+            path.name,
+            exc,
+        )
+        return load_workbook(_workbook_bytes_without_styles(path), **kwargs)
 
 # Flexible header aliases (export typos / renames).
 _HEADER_ALIASES: dict[str, tuple[str, ...]] = {
@@ -338,7 +407,15 @@ def parse_cierres_workbook(
 ) -> list[CierreShift] | tuple[list[CierreShift], CierresParseStats]:
     """Parse closed cash-register shifts from all sheets in the cierres Excel."""
     path = Path(path)
-    wb = load_workbook(path, data_only=True, read_only=True)
+    name_l = path.name.lower()
+    if "registrar" in name_l and "cierres" not in name_l:
+        logging.warning(
+            "File %r looks like a 'Registrar informe' export, not "
+            "'Informe avanzado de cierres de caja'. Wrong report type usually fails "
+            "column detection — re-export the advanced cash-closures report.",
+            path.name,
+        )
+    wb = load_cierres_workbook(path, data_only=True, read_only=True)
     stats = CierresParseStats()
     try:
         shifts: list[CierreShift] = []
@@ -429,7 +506,7 @@ def is_cierres_workbook(path: str | Path) -> bool:
     ):
         return True
     try:
-        wb = load_workbook(path, data_only=True, read_only=True)
+        wb = load_cierres_workbook(path, data_only=True, read_only=True)
         try:
             for sheet_name in wb.sheetnames:
                 ws = wb[sheet_name]
