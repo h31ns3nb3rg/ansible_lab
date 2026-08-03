@@ -70,6 +70,8 @@ VENTAS_JOB_TAG=manual-all ./scripts/run_job.sh --fetch-gmail
 
 **Habit:** drop the AdControl cierres `.xlsx` into `inbox/` before you run (or before 01:00 / 11:00).
 
+For a full backfill, export **both** locations (SAN JUAN + DEFILLO) and the **full date range** in AdControl. The importer reads **every sheet** in the workbook. If the resume shows only `La Cata DF` or a short date range, the source file itself was filtered — re-export and import again.
+
 ### DF / SJM only — import a cierres Excel path
 
 **Quote the path** — AdControl filenames have spaces:
