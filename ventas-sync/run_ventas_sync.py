@@ -110,6 +110,10 @@ def main() -> int:
         print(f"Day/location rows: {result.get('days_locations')} ({result.get('by_ubicacion')})")
         print(f"Range: {result.get('date_from')} → {result.get('date_to')}")
         stats = result.get("parse_stats") or {}
+        if stats.get("efectivo_source"):
+            print(f"EFECTIVO source: {stats.get('efectivo_source')} (not Cantidad de cierre)")
+        if stats.get("headers_resolved"):
+            print(f"Headers used: {stats.get('headers_resolved')}")
         if stats.get("sheets_read") is not None:
             print(f"Sheets read: {stats.get('sheets_read')}")
         if stats.get("raw_ubicaciones"):
@@ -118,6 +122,15 @@ def main() -> int:
             print(f"Skipped open registers: {stats.get('skipped_open')}")
         if stats.get("skipped_unknown_ubicacion"):
             print(f"Skipped unknown ubicación: {stats.get('skipped_unknown_ubicacion')}")
+        for sample in stats.get("sample_breakdown") or []:
+            print(
+                "  sample "
+                f"{sample.get('fecha')} {sample.get('ubicacion')}: "
+                f"cierre={sample.get('cantidad_cierre')} "
+                f"fondo={sample.get('fondo_caja')} "
+                f"→ EFECTIVO={sample.get('efectivo_escrito')} "
+                f"({sample.get('source')})"
+            )
         for warn in result.get("warnings") or []:
             print(f"WARNING: {warn}")
         if args.dry_run:

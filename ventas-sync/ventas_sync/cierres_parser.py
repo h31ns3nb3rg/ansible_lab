@@ -91,7 +91,13 @@ _HEADER_ALIASES: dict[str, tuple[str, ...]] = {
     "cantidad_cierre": ("cantidad de cierre",),
     "fondo_caja": ("fondo de caja",),
     # Sales cash for Ventas Diarias EFECTIVO (excludes fondo de caja float)
-    "pago_efectivo": ("pago en efectivo", "pago en efectivos"),
+    "pago_efectivo": (
+        "pago en efectivo",
+        "pago en efectivos",
+        "pagos en efectivo",
+        "total pago en efectivo",
+        "total en pago en efectivo",
+    ),
     "hora_apertura": ("hora de apertura",),
     "tarjeta": ("total en pago con tarjeta", "pago con tarjeta"),
     "transferencia": (
@@ -257,6 +263,9 @@ class CierresParseStats:
     skipped_unknown_ubicacion: dict[str, int] = field(default_factory=dict)
     skipped_errors: int = 0
     rows_seen: int = 0
+    headers_resolved: list[str] = field(default_factory=list)
+    efectivo_source: str | None = None
+    sample_breakdown: list[dict[str, Any]] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -267,6 +276,9 @@ class CierresParseStats:
             "skipped_unknown_ubicacion": dict(self.skipped_unknown_ubicacion),
             "skipped_errors": self.skipped_errors,
             "rows_seen": self.rows_seen,
+            "headers_resolved": list(self.headers_resolved),
+            "efectivo_source": self.efectivo_source,
+            "sample_breakdown": list(self.sample_breakdown),
         }
 
 
@@ -274,29 +286,62 @@ def _efectivo_from_row(
     row: tuple[Any, ...],
     cols: dict[str, int],
     ubicacion: str,
-) -> tuple[float, float, float | None]:
-    """Return (pago_en_efectivo, fondo_caja, cantidad_cierre).
+) -> tuple[float, float, float | None, str]:
+    """Return (efectivo_ventas, fondo_caja, cantidad_cierre, source_label).
 
-    Ventas Diarias EFECTIVO uses AdControl **Pago en efectivo** (sales cash).
-    That equals Cantidad de cierre − Fondo de Caja (float is not sales).
+    Ventas Diarias EFECTIVO must be sales cash only:
+    prefer AdControl **Pago en efectivo**, else Cantidad de cierre − Fondo de Caja.
     """
     cantidad: float | None = None
     if "cantidad_cierre" in cols:
         cantidad = _parse_money(row[cols["cantidad_cierre"]])
 
+    default_fondo = _DEFAULT_FONDO_BY_UBICACION.get(ubicacion, 0.0)
     if "fondo_caja" in cols:
         fondo = _parse_money(row[cols["fondo_caja"]])
+        # Empty/zero fondo in export is not trustworthy for these stores
+        if fondo <= 0 and default_fondo > 0:
+            logging.warning(
+                "%s: Fondo de Caja missing/zero in row; using default %.2f",
+                ubicacion,
+                default_fondo,
+            )
+            fondo = default_fondo
     else:
-        fondo = _DEFAULT_FONDO_BY_UBICACION.get(ubicacion, 0.0)
+        fondo = default_fondo
 
+    source = "cantidad_cierre_minus_fondo"
     if "pago_efectivo" in cols:
         efectivo = _parse_money(row[cols["pago_efectivo"]])
+        source = "pago_en_efectivo"
+        # Some exports duplicate drawer total into Pago en efectivo
+        if cantidad is not None and fondo > 0 and abs(efectivo - cantidad) < 0.01:
+            logging.warning(
+                "%s: Pago en efectivo (%.2f) equals Cantidad de cierre; "
+                "subtracting fondo %.2f",
+                ubicacion,
+                efectivo,
+                fondo,
+            )
+            efectivo = max(0.0, cantidad - fondo)
+            source = "cantidad_cierre_minus_fondo_guard"
     elif cantidad is not None:
         efectivo = max(0.0, cantidad - fondo)
     else:
         raise ValueError("Cierres row missing Pago en efectivo and Cantidad de cierre")
 
-    if cantidad is not None and "pago_efectivo" in cols:
+    if cantidad is not None and abs(efectivo - cantidad) < 0.01 and fondo > 0:
+        # Final safety: never write drawer total when float is known
+        logging.warning(
+            "%s: EFECTIVO still equals Cantidad de cierre (%.2f); forcing minus fondo %.2f",
+            ubicacion,
+            cantidad,
+            fondo,
+        )
+        efectivo = max(0.0, cantidad - fondo)
+        source = "cantidad_cierre_minus_fondo_forced"
+
+    if cantidad is not None and source.startswith("pago") and fondo > 0:
         expected = max(0.0, round(cantidad - fondo, 2))
         if abs(expected - round(efectivo, 2)) > 0.01:
             logging.warning(
@@ -308,7 +353,7 @@ def _efectivo_from_row(
                 efectivo,
                 expected,
             )
-    return efectivo, fondo, cantidad
+    return efectivo, fondo, cantidad, source
 
 
 def _parse_sheet(
@@ -330,6 +375,16 @@ def _parse_sheet(
         stats.sheets_skipped.append(f"{sheet_name}:{exc}")
         logging.info("Skipping sheet %r (not cierres layout): %s", sheet_name, exc)
         return []
+
+    if not stats.headers_resolved:
+        stats.headers_resolved = sorted(cols.keys())
+        logging.info(
+            "Cierres headers on %r: %s | pago_efectivo_col=%s fondo_col=%s",
+            sheet_name,
+            stats.headers_resolved,
+            "pago_efectivo" in cols,
+            "fondo_caja" in cols,
+        )
 
     shifts: list[CierreShift] = []
     for row in rows:
@@ -371,7 +426,20 @@ def _parse_sheet(
                     if raw_user is not None:
                         usuario = str(raw_user).strip() or None
                     break
-            efectivo, fondo, cantidad = _efectivo_from_row(row, cols, ubicacion)
+            efectivo, fondo, cantidad, ef_source = _efectivo_from_row(row, cols, ubicacion)
+            if stats.efectivo_source is None:
+                stats.efectivo_source = ef_source
+            if len(stats.sample_breakdown) < 6:
+                stats.sample_breakdown.append(
+                    {
+                        "fecha": fecha.isoformat(),
+                        "ubicacion": ubicacion,
+                        "cantidad_cierre": cantidad,
+                        "fondo_caja": fondo,
+                        "efectivo_escrito": efectivo,
+                        "source": ef_source,
+                    }
+                )
             shifts.append(
                 CierreShift(
                     fecha=fecha,
