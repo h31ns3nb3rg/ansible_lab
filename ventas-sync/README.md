@@ -257,6 +257,7 @@ python run_ventas_sync.py --cleanup             # delete now
 | Wrong DF/SJM totals | Re-export cierres Excel, drop in `inbox/`, run `--no-fetch-gmail`. Check log lines `Cierres row …`. |
 | Register PDFs ignored | Expected — use cierres `.xlsx`. Or set `register_pdfs_enabled: true`. |
 | Gmail 403 / consent | Add your Google account as a test user; re-run `--auth-gmail`. |
+| `invalid_grant` / token expired or revoked | Delete old token and re-login: `rm secrets/token.json && python run_ventas_sync.py --auth-gmail` |
 | Schedule did not fire | Check Mac sleep; re-run `install_schedule.sh`. |
 | `can't open file .../tmp/run_ventas_sync.py` | `cd ~/Cata-Ventas-Auto` before running Python. |
 
